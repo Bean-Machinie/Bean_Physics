@@ -60,6 +60,46 @@ class MainWindow(QtWidgets.QMainWindow):
         self._toolbar.setIconSize(QtCore.QSize(18, 18))
         self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, self._toolbar)
 
+        self._action_frame_all = QtGui.QAction("Frame All", self)
+        self._action_frame_all.triggered.connect(self._on_frame_all)
+        self._toolbar.addAction(self._action_frame_all)
+
+        self._action_frame_selection = QtGui.QAction("Frame Selection", self)
+        self._action_frame_selection.triggered.connect(self._on_frame_selection)
+        self._toolbar.addAction(self._action_frame_selection)
+
+        self._follow_toggle = QtWidgets.QToolButton(self)
+        self._follow_toggle.setText("Follow Selection")
+        self._follow_toggle.setCheckable(True)
+        self._follow_toggle.toggled.connect(self._on_follow_toggled)
+        self._toolbar.addWidget(self._follow_toggle)
+
+        self._toolbar.addSeparator()
+
+        self._trail_toggle = QtWidgets.QToolButton(self)
+        self._trail_toggle.setText("Trails")
+        self._trail_toggle.setCheckable(True)
+        self._trail_toggle.toggled.connect(self._on_trails_toggled)
+        self._toolbar.addWidget(self._trail_toggle)
+
+        trail_label = QtWidgets.QLabel("Trail Length")
+        trail_label.setContentsMargins(6, 0, 6, 0)
+        self._toolbar.addWidget(trail_label)
+
+        self._trail_length = QtWidgets.QSpinBox(self)
+        self._trail_length.setRange(0, 5000)
+        self._trail_length.setValue(500)
+        self._trail_length.valueChanged.connect(self._on_trail_length_changed)
+        self._toolbar.addWidget(self._trail_length)
+
+        self._labels_toggle = QtWidgets.QToolButton(self)
+        self._labels_toggle.setText("Labels")
+        self._labels_toggle.setCheckable(True)
+        self._labels_toggle.toggled.connect(self._on_labels_toggled)
+        self._toolbar.addWidget(self._labels_toggle)
+
+        self._toolbar.addSeparator()
+
         steps_label = QtWidgets.QLabel("Steps/Frame")
         steps_label.setContentsMargins(6, 0, 6, 0)
         self._toolbar.addWidget(steps_label)
@@ -240,6 +280,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_reset(self) -> None:
         if self._controller.reset():
             self._apply_state_to_viewport()
+            self._viewport.reset_trails()
         self._running = False
         self._update_action_state()
         self._update_status()
@@ -275,6 +316,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._action_pause.setEnabled(loaded and self._running)
         self._action_step.setEnabled(loaded and not self._running and can_step)
         self._action_reset.setEnabled(loaded)
+        self._action_frame_all.setEnabled(loaded)
+        self._action_frame_selection.setEnabled(loaded)
         has_session = self._session.scenario_def is not None
         self._action_save.setEnabled(has_session)
         self._action_save_as.setEnabled(has_session)
@@ -427,6 +470,29 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_action_state()
         self._update_status()
         self._update_window_title()
+
+    def _on_frame_all(self) -> None:
+        pos = self._controller.particle_positions()
+        self._viewport.frame_all(pos)
+
+    def _on_frame_selection(self) -> None:
+        obj = self._objects_panel.selected_object()
+        if obj is None or obj.type != "particle":
+            return
+        pos = self._controller.particle_positions()
+        self._viewport.frame_selection(pos, [obj.index])
+
+    def _on_follow_toggled(self, enabled: bool) -> None:
+        self._viewport.set_follow_selection(enabled)
+
+    def _on_trails_toggled(self, enabled: bool) -> None:
+        self._viewport.set_trails_enabled(enabled)
+
+    def _on_trail_length_changed(self, value: int) -> None:
+        self._viewport.set_trail_length(value)
+
+    def _on_labels_toggled(self, enabled: bool) -> None:
+        self._viewport.set_labels_enabled(enabled)
 
     def _confirm_discard_if_dirty(self) -> bool:
         if not self._session.is_dirty:

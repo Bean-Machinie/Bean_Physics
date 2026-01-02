@@ -6,6 +6,8 @@ import numpy as np
 from PySide6 import QtWidgets
 from vispy import app, scene
 
+from .viz_utils import compute_bounds, compute_selection_bounds
+
 app.use_app("pyside6")
 
 
@@ -29,8 +31,24 @@ class ViewportWidget(QtWidgets.QWidget):
         self._rigid_markers = scene.visuals.Markers(parent=self._view.scene)
         self._selected_particles = scene.visuals.Markers(parent=self._view.scene)
         self._selected_particles.set_gl_state("translucent", depth_test=False)
+        self._trail = scene.visuals.Line(parent=self._view.scene, color=(0.9, 0.9, 0.2, 0.7))
+        self._trail.set_gl_state("translucent", depth_test=False)
+        self._label = scene.visuals.Text(
+            "",
+            color="white",
+            font_size=10,
+            parent=self._view.scene,
+        )
+        self._label.visible = False
         self._selected_indices: list[int] = []
         self._last_particle_pos = np.zeros((0, 3), dtype=np.float32)
+        self._trail_enabled = False
+        self._trail_length = 500
+        self._trail_stride = 1
+        self._trail_counter = 0
+        self._trail_points: list[np.ndarray] = []
+        self._follow_selection = False
+        self._labels_enabled = False
 
         self._init_dummy_particles()
 
@@ -57,6 +75,9 @@ class ViewportWidget(QtWidgets.QWidget):
             size=6,
         )
         self._update_selected_particles()
+        self._update_trail()
+        self._update_labels()
+        self._update_follow()
 
     def set_rigid_bodies(self, pos: np.ndarray, quat: np.ndarray) -> None:
         _ = quat
@@ -74,7 +95,11 @@ class ViewportWidget(QtWidgets.QWidget):
 
     def set_selected_particles(self, indices: list[int]) -> None:
         self._selected_indices = indices
+        self._trail_points = []
+        self._trail_counter = 0
         self._update_selected_particles()
+        self._update_trail()
+        self._update_labels()
 
     def _update_selected_particles(self) -> None:
         if not self._selected_indices:
@@ -101,3 +126,90 @@ class ViewportWidget(QtWidgets.QWidget):
             edge_color=None,
             size=10,
         )
+
+    def set_follow_selection(self, enabled: bool) -> None:
+        self._follow_selection = enabled
+
+    def set_trails_enabled(self, enabled: bool) -> None:
+        self._trail_enabled = enabled
+        if not enabled:
+            self.reset_trails()
+
+    def set_trail_length(self, length: int) -> None:
+        self._trail_length = max(0, int(length))
+        if self._trail_length == 0:
+            self.reset_trails()
+
+    def set_trail_stride(self, stride: int) -> None:
+        self._trail_stride = max(1, int(stride))
+
+    def reset_trails(self) -> None:
+        self._trail_points = []
+        self._trail.set_data(np.zeros((0, 3), dtype=np.float32))
+
+    def set_labels_enabled(self, enabled: bool) -> None:
+        self._labels_enabled = enabled
+        self._label.visible = enabled
+        self._update_labels()
+
+    def frame_all(self, pos: np.ndarray) -> None:
+        center, radius = compute_bounds(np.asarray(pos, dtype=np.float32))
+        self._frame(center, radius)
+
+    def frame_selection(self, pos: np.ndarray, indices: list[int]) -> None:
+        center, radius = compute_selection_bounds(
+            np.asarray(pos, dtype=np.float32), indices
+        )
+        self._frame(center, radius)
+
+    def _frame(self, center: np.ndarray, radius: float) -> None:
+        camera = self._view.camera
+        if camera is None:
+            return
+        camera.center = center
+        camera.distance = max(radius * 3.0, 1.0)
+
+    def _update_trail(self) -> None:
+        if not self._trail_enabled or self._trail_length <= 0:
+            return
+        if not self._selected_indices:
+            self._trail.set_data(np.zeros((0, 3), dtype=np.float32))
+            return
+        idx = self._selected_indices[0]
+        if idx < 0 or idx >= self._last_particle_pos.shape[0]:
+            self._trail.set_data(np.zeros((0, 3), dtype=np.float32))
+            return
+        self._trail_counter += 1
+        if self._trail_counter % self._trail_stride != 0:
+            return
+        self._trail_points.append(self._last_particle_pos[idx].copy())
+        if len(self._trail_points) > self._trail_length:
+            self._trail_points.pop(0)
+        trail = np.asarray(self._trail_points, dtype=np.float32)
+        self._trail.set_data(trail)
+
+    def _update_labels(self) -> None:
+        if not self._labels_enabled:
+            self._label.visible = False
+            return
+        if not self._selected_indices:
+            self._label.visible = False
+            return
+        idx = self._selected_indices[0]
+        if idx < 0 or idx >= self._last_particle_pos.shape[0]:
+            self._label.visible = False
+            return
+        pos = self._last_particle_pos[idx]
+        self._label.text = f"Particle {idx + 1}"
+        self._label.pos = pos
+        self._label.visible = True
+
+    def _update_follow(self) -> None:
+        if not self._follow_selection:
+            return
+        if not self._selected_indices:
+            return
+        idx = self._selected_indices[0]
+        if idx < 0 or idx >= self._last_particle_pos.shape[0]:
+            return
+        self._view.camera.center = self._last_particle_pos[idx]
