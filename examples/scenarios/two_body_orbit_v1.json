@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "name": "Two-body orbit",
+    "description": "Near-circular two-body orbit in normalized units."
+  },
+  "simulation": {
+    "dt": 0.001,
+    "steps": 10000,
+    "integrator": "velocity_verlet"
+  },
+  "sampling": {
+    "every": 500
+  },
+  "entities": {
+    "particles": {
+      "pos": [
+        [-0.5, 0.0, 0.0],
+        [0.5, 0.0, 0.0]
+      ],
+      "vel": [
+        [0.0, 0.7071067811865476, 0.0],
+        [0.0, -0.7071067811865476, 0.0]
+      ],
+      "mass": [1.0, 1.0]
+    }
+  },
+  "models": [
+    {
+      "nbody_gravity": {
+        "G": 1.0,
+        "softening": 0.0,
+        "chunk_size": null
+      }
+    }
+  ]
+}
