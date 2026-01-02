@@ -5,25 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-import numpy as np
-from numpy.typing import NDArray
-
+from ..forces.base import Model
 from ..math.quat import quat_integrate_expmap
 from ..state.system import SystemState
-
-
-ArrayF = NDArray[np.float64]
-
-
-class Model(Protocol):
-    def acc_particles(self, state: SystemState) -> ArrayF:
-        """Return particle accelerations as (N, 3)."""
-
-    def acc_rigid(self, state: SystemState) -> ArrayF:
-        """Return rigid body CoM accelerations as (M, 3)."""
-
-    def alpha_rigid(self, state: SystemState) -> ArrayF:
-        """Return rigid body angular accelerations as (M, 3)."""
 
 
 class Integrator(Protocol):
