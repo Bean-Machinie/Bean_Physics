@@ -7,6 +7,8 @@ from bean_physics.core.diagnostics import (
     center_of_mass,
     kinetic_energy,
     linear_momentum,
+    potential_energy_gravity,
+    total_energy_gravity,
     total_mass,
 )
 from bean_physics.core.state import ParticlesState, SystemState
@@ -35,3 +37,14 @@ def test_diagnostics_empty_set_behavior() -> None:
     assert kinetic_energy(state) == 0.0
     with pytest.raises(ValueError, match="empty particle set"):
         _ = center_of_mass(state)
+
+
+def test_gravity_potential_energy() -> None:
+    pos = np.array([[0.0, 0.0, 0.0], [4.0, 0.0, 0.0]], dtype=np.float64)
+    vel = np.zeros((2, 3), dtype=np.float64)
+    mass = np.array([2.0, 3.0], dtype=np.float64)
+    state = SystemState(particles=ParticlesState(pos=pos, vel=vel, mass=mass))
+
+    pe = potential_energy_gravity(state, G=1.0)
+    assert pe == -1.5
+    assert total_energy_gravity(state, G=1.0) == pe
