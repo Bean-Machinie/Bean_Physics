@@ -6,7 +6,14 @@ from typing import Sequence
 
 from PySide6 import QtCore, QtWidgets
 
-from .panels.objects_utils import ObjectRef, apply_particle_edit, particle_summary
+from .panels.objects_utils import (
+    ObjectRef,
+    apply_nbody_gravity,
+    apply_particle_edit,
+    apply_uniform_gravity,
+    force_summary,
+    particle_summary,
+)
 
 
 class ObjectInspector(QtWidgets.QDialog):
@@ -19,17 +26,45 @@ class ObjectInspector(QtWidgets.QDialog):
         self._defn: dict | None = None
         self._obj: ObjectRef | None = None
 
-        form = QtWidgets.QFormLayout()
+        self._stack = QtWidgets.QStackedWidget(self)
+        self._page_empty = QtWidgets.QWidget()
+        self._stack.addWidget(self._page_empty)
+
+        self._particle_page = QtWidgets.QWidget()
+        particle_form = QtWidgets.QFormLayout(self._particle_page)
         self._pos = _vector_fields()
         self._vel = _vector_fields()
         self._mass = QtWidgets.QDoubleSpinBox(self)
         self._mass.setRange(1e-12, 1e12)
         self._mass.setDecimals(6)
         self._mass.setValue(1.0)
+        particle_form.addRow("Position", _vector_widget(self._pos))
+        particle_form.addRow("Velocity", _vector_widget(self._vel))
+        particle_form.addRow("Mass", self._mass)
+        self._stack.addWidget(self._particle_page)
 
-        form.addRow("Position", _vector_widget(self._pos))
-        form.addRow("Velocity", _vector_widget(self._vel))
-        form.addRow("Mass", self._mass)
+        self._uniform_page = QtWidgets.QWidget()
+        uniform_form = QtWidgets.QFormLayout(self._uniform_page)
+        self._g = _vector_fields()
+        uniform_form.addRow("g", _vector_widget(self._g))
+        self._stack.addWidget(self._uniform_page)
+
+        self._nbody_page = QtWidgets.QWidget()
+        nbody_form = QtWidgets.QFormLayout(self._nbody_page)
+        self._G = QtWidgets.QDoubleSpinBox(self)
+        self._G.setRange(1e-12, 1e12)
+        self._G.setDecimals(6)
+        self._G.setValue(1.0)
+        self._softening = QtWidgets.QDoubleSpinBox(self)
+        self._softening.setRange(0.0, 1e12)
+        self._softening.setDecimals(6)
+        self._softening.setValue(0.0)
+        self._chunk = QtWidgets.QLineEdit(self)
+        self._chunk.setPlaceholderText("blank = None")
+        nbody_form.addRow("G", self._G)
+        nbody_form.addRow("Softening", self._softening)
+        nbody_form.addRow("Chunk size", self._chunk)
+        self._stack.addWidget(self._nbody_page)
 
         self._btn_apply = QtWidgets.QPushButton("Apply", self)
         self._btn_revert = QtWidgets.QPushButton("Revert", self)
@@ -45,7 +80,7 @@ class ObjectInspector(QtWidgets.QDialog):
         button_row.addWidget(self._btn_close)
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addLayout(form)
+        layout.addWidget(self._stack)
         layout.addLayout(button_row)
 
     def set_target(self, defn: dict | None, obj: ObjectRef | None) -> None:
@@ -56,18 +91,46 @@ class ObjectInspector(QtWidgets.QDialog):
     def _sync_from_defn(self) -> None:
         if self._defn is None or self._obj is None:
             self._set_enabled(False)
+            self._stack.setCurrentWidget(self._page_empty)
             return
-        if self._obj.type != "particle":
-            self._set_enabled(False)
+        if self._obj.type == "particle":
+            summary = particle_summary(self._defn, self._obj.index)
+            _set_vector(self._pos, summary["x"], summary["y"], summary["z"])
+            _set_vector(self._vel, summary["vx"], summary["vy"], summary["vz"])
+            self._mass.setValue(summary["mass"])
+            self._stack.setCurrentWidget(self._particle_page)
+            self._set_enabled(True)
             return
-        summary = particle_summary(self._defn, self._obj.index)
-        _set_vector(self._pos, summary["x"], summary["y"], summary["z"])
-        _set_vector(self._vel, summary["vx"], summary["vy"], summary["vz"])
-        self._mass.setValue(summary["mass"])
-        self._set_enabled(True)
+        if self._obj.type == "force":
+            summary = force_summary(self._defn, self._obj.index)
+            if summary["type"] == "uniform_gravity":
+                g = summary["g"]
+                _set_vector(self._g, g[0], g[1], g[2])
+                self._stack.setCurrentWidget(self._uniform_page)
+                self._set_enabled(True)
+                return
+            if summary["type"] == "nbody_gravity":
+                self._G.setValue(summary["G"])
+                self._softening.setValue(summary["softening"])
+                chunk = summary["chunk_size"]
+                self._chunk.setText("" if chunk is None else str(chunk))
+                self._stack.setCurrentWidget(self._nbody_page)
+                self._set_enabled(True)
+                return
+        self._set_enabled(False)
+        self._stack.setCurrentWidget(self._page_empty)
 
     def _set_enabled(self, enabled: bool) -> None:
-        for field in (*self._pos, *self._vel, self._mass):
+        widgets = [
+            *self._pos,
+            *self._vel,
+            self._mass,
+            *self._g,
+            self._G,
+            self._softening,
+            self._chunk,
+        ]
+        for field in widgets:
             field.setEnabled(enabled)
         self._btn_apply.setEnabled(enabled)
         self._btn_revert.setEnabled(enabled)
@@ -75,11 +138,32 @@ class ObjectInspector(QtWidgets.QDialog):
     def _on_apply(self) -> None:
         if self._defn is None or self._obj is None:
             return
-        values = [*self._vector_values(self._pos), *self._vector_values(self._vel), self._mass.value()]
         try:
-            apply_particle_edit(self._defn, self._obj.index, values)
+            if self._obj.type == "particle":
+                values = [
+                    *self._vector_values(self._pos),
+                    *self._vector_values(self._vel),
+                    self._mass.value(),
+                ]
+                apply_particle_edit(self._defn, self._obj.index, values)
+            elif self._obj.type == "force":
+                if self._obj.subtype == "uniform_gravity":
+                    g = self._vector_values(self._g)
+                    apply_uniform_gravity(self._defn, self._obj.index, g)
+                elif self._obj.subtype == "nbody_gravity":
+                    apply_nbody_gravity(
+                        self._defn,
+                        self._obj.index,
+                        self._G.value(),
+                        self._softening.value(),
+                        self._chunk.text().strip(),
+                    )
+                else:
+                    raise ValueError("unsupported force type")
+            else:
+                return
         except Exception as exc:  # pragma: no cover - Qt error path
-            QtWidgets.QMessageBox.critical(self, "Invalid Particle", str(exc))
+            QtWidgets.QMessageBox.critical(self, "Invalid Values", str(exc))
             return
         self.applied.emit(self._obj)
 

@@ -24,3 +24,9 @@ Editing particles:
 - Use the `Objects` dock to select particles; double-click a particle to open the Object Details inspector.
 - Edit position/velocity/mass in the inspector and click `Apply` to write changes and reset the simulation state.
 - Edits mark the session as dirty; remember to `Save` or `Save As` to persist them.
+
+Forces:
+
+- Use the `Objects` dock buttons to add Uniform Gravity or N-body Gravity.
+- Select a force and double-click to edit its parameters in the Object Details inspector.
+- Clicking `Apply` updates the scenario, resets the simulation, and marks the session dirty.

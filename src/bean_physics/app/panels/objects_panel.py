@@ -6,13 +6,15 @@ from typing import Iterable
 
 from PySide6 import QtCore, QtWidgets
 
-from .objects_utils import ObjectRef, particle_summary
+from .objects_utils import ObjectRef, force_summary, particle_summary
 
 
 class ObjectsPanel(QtWidgets.QWidget):
     selection_changed = QtCore.Signal(object)
     item_activated = QtCore.Signal(object)
-    add_requested = QtCore.Signal()
+    add_particle_requested = QtCore.Signal()
+    add_uniform_requested = QtCore.Signal()
+    add_nbody_requested = QtCore.Signal()
     remove_requested = QtCore.Signal(object)
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
@@ -25,13 +27,19 @@ class ObjectsPanel(QtWidgets.QWidget):
         self._list.itemClicked.connect(self._on_item_clicked)
         self._list.itemDoubleClicked.connect(self._on_item_activated)
 
-        self._btn_add = QtWidgets.QPushButton("Add Particle", self)
+        self._btn_add_particle = QtWidgets.QPushButton("Add Particle", self)
+        self._btn_add_uniform = QtWidgets.QPushButton("Add Uniform Gravity", self)
+        self._btn_add_nbody = QtWidgets.QPushButton("Add N-body Gravity", self)
         self._btn_remove = QtWidgets.QPushButton("Remove Selected", self)
-        self._btn_add.clicked.connect(self.add_requested.emit)
+        self._btn_add_particle.clicked.connect(self.add_particle_requested.emit)
+        self._btn_add_uniform.clicked.connect(self.add_uniform_requested.emit)
+        self._btn_add_nbody.clicked.connect(self.add_nbody_requested.emit)
         self._btn_remove.clicked.connect(self._on_remove_clicked)
 
         button_row = QtWidgets.QHBoxLayout()
-        button_row.addWidget(self._btn_add)
+        button_row.addWidget(self._btn_add_particle)
+        button_row.addWidget(self._btn_add_uniform)
+        button_row.addWidget(self._btn_add_nbody)
         button_row.addWidget(self._btn_remove)
         button_row.addStretch(1)
 
@@ -43,23 +51,37 @@ class ObjectsPanel(QtWidgets.QWidget):
     def set_items(
         self,
         defn: dict,
-        objects: Iterable[ObjectRef],
+        particles: Iterable[ObjectRef],
+        forces: Iterable[ObjectRef],
     ) -> None:
         self._list.blockSignals(True)
         self._list.clear()
-        for obj in objects:
-            if obj.type != "particle":
-                continue
+        self._add_section("Particles")
+        for obj in particles:
             summary = particle_summary(defn, obj.index)
             title = f"Particle {obj.index + 1}"
             detail = (
                 f"mass {summary['mass']:.3g}  "
                 f"pos ({summary['x']:.3g}, {summary['y']:.3g}, {summary['z']:.3g})"
             )
-            item = QtWidgets.QListWidgetItem(f"{title}\n{detail}")
-            item.setData(QtCore.Qt.ItemDataRole.UserRole, obj)
-            item.setSizeHint(QtCore.QSize(200, 44))
-            self._list.addItem(item)
+            self._add_item(obj, title, detail)
+
+        self._add_section("Forces")
+        for obj in forces:
+            summary = force_summary(defn, obj.index)
+            if summary["type"] == "uniform_gravity":
+                title = "Uniform Gravity"
+                g = summary["g"]
+                detail = f"g=({g[0]:.3g}, {g[1]:.3g}, {g[2]:.3g})"
+            else:
+                title = "N-body Gravity"
+                chunk = summary["chunk_size"]
+                chunk_label = "None" if chunk is None else str(chunk)
+                detail = (
+                    f"G={summary['G']:.3g}  eps={summary['softening']:.3g}  "
+                    f"chunk={chunk_label}"
+                )
+            self._add_item(obj, title, detail)
         self._list.blockSignals(False)
 
     def selected_object(self) -> ObjectRef | None:
@@ -89,3 +111,16 @@ class ObjectsPanel(QtWidgets.QWidget):
 
     def _on_remove_clicked(self) -> None:
         self.remove_requested.emit(self.selected_object())
+
+    def _add_section(self, label: str) -> None:
+        item = QtWidgets.QListWidgetItem(label)
+        item.setFlags(QtCore.Qt.ItemFlag.NoItemFlags)
+        item.setForeground(QtCore.Qt.GlobalColor.darkGray)
+        item.setSizeHint(QtCore.QSize(200, 24))
+        self._list.addItem(item)
+
+    def _add_item(self, obj: ObjectRef, title: str, detail: str) -> None:
+        item = QtWidgets.QListWidgetItem(f"{title}\n{detail}")
+        item.setData(QtCore.Qt.ItemDataRole.UserRole, obj)
+        item.setSizeHint(QtCore.QSize(200, 44))
+        self._list.addItem(item)

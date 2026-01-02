@@ -6,14 +6,20 @@ from pathlib import Path
 import pytest
 
 from bean_physics.app.panels.objects_utils import (
+    add_nbody_gravity,
     add_particle,
+    add_uniform_gravity,
+    apply_nbody_gravity,
     apply_particle_edit,
+    apply_uniform_gravity,
+    list_forces,
     list_particles,
     particle_summary,
+    remove_force,
     remove_particle,
 )
 from bean_physics.app.session import ScenarioSession
-from bean_physics.io.scenario import load_scenario, save_scenario
+from bean_physics.io.scenario import load_scenario, save_scenario, scenario_to_runtime
 
 
 def test_add_particle_updates_scenario() -> None:
@@ -56,3 +62,51 @@ def test_round_trip_save_load(tmp_path: Path) -> None:
     save_scenario(path, defn)
     loaded = load_scenario(path)
     assert loaded["entities"]["particles"] == defn["entities"]["particles"]
+
+
+def test_add_forces_updates_models() -> None:
+    session = ScenarioSession()
+    defn = session.new_default()
+    idx_u = add_uniform_gravity(defn, [0, -9.81, 0])
+    idx_n = add_nbody_gravity(defn, 1.0, 0.0, None)
+    forces = list_forces(defn)
+    assert any(obj.index == idx_u for obj in forces)
+    assert any(obj.index == idx_n for obj in forces)
+    assert defn["models"][idx_u]["uniform_gravity"]["g"] == [0.0, -9.81, 0.0]
+    assert defn["models"][idx_n]["nbody_gravity"]["G"] == 1.0
+
+
+def test_remove_force_reindexes() -> None:
+    session = ScenarioSession()
+    defn = session.new_default()
+    add_uniform_gravity(defn, [0, -9.81, 0])
+    add_nbody_gravity(defn, 1.0, 0.0, None)
+    remove_force(defn, 0)
+    assert "uniform_gravity" not in defn["models"][0]
+
+
+def test_apply_force_validation() -> None:
+    session = ScenarioSession()
+    defn = session.new_default()
+    idx = add_uniform_gravity(defn, [0, -9.81, 0])
+    with pytest.raises(ValueError, match="g must have 3 values"):
+        apply_uniform_gravity(defn, idx, [0, 1])
+
+    idx_n = add_nbody_gravity(defn, 1.0, 0.0, None)
+    with pytest.raises(ValueError, match="G must be > 0"):
+        apply_nbody_gravity(defn, idx_n, 0.0, 0.0, None)
+    with pytest.raises(ValueError, match="chunk_size must be >= 1"):
+        apply_nbody_gravity(defn, idx_n, 1.0, 0.0, 0)
+
+
+def test_uniform_gravity_changes_velocity() -> None:
+    session = ScenarioSession()
+    defn = session.new_default()
+    add_particle(defn)
+    apply_particle_edit(defn, 0, [0, 0, 0, 0, 0, 0, 1])
+    add_uniform_gravity(defn, [0, -9.81, 0])
+    state, model, integrator, dt, _, _ = scenario_to_runtime(defn)
+    v0 = state.particles.vel[0, 1]
+    for _ in range(5):
+        integrator.step(state, model, dt)
+    assert state.particles.vel[0, 1] < v0

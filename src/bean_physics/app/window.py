@@ -10,8 +10,12 @@ from .session import ScenarioSession
 from .panels.objects_panel import ObjectsPanel
 from .panels.objects_utils import (
     ObjectRef,
+    add_nbody_gravity,
     add_particle,
+    add_uniform_gravity,
+    list_forces,
     list_particles,
+    remove_force,
     remove_particle,
 )
 from .inspector import ObjectInspector
@@ -36,7 +40,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._objects_panel = ObjectsPanel(self)
         self._objects_panel.selection_changed.connect(self._on_object_selected)
         self._objects_panel.item_activated.connect(self._on_object_activated)
-        self._objects_panel.add_requested.connect(self._on_add_particle)
+        self._objects_panel.add_particle_requested.connect(self._on_add_particle)
+        self._objects_panel.add_uniform_requested.connect(self._on_add_uniform_gravity)
+        self._objects_panel.add_nbody_requested.connect(self._on_add_nbody_gravity)
         self._objects_panel.remove_requested.connect(self._on_remove_selected)
 
         self._inspector = ObjectInspector(self)
@@ -300,27 +306,34 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _refresh_objects_panel(self) -> None:
         if self._session.scenario_def is None:
-            self._objects_panel.set_items({}, [])
+            self._objects_panel.set_items({}, [], [])
             self._objects_panel.select_object(None)
             self._viewport.set_selected_particles([])
             if self._inspector.isVisible():
                 self._inspector.set_target(self._session.scenario_def, None)
             return
-        objects = list_particles(self._session.scenario_def)
-        self._objects_panel.set_items(self._session.scenario_def, objects)
-        if objects:
-            self._objects_panel.select_object(objects[0])
-            self._on_object_selected(objects[0])
+        particles = list_particles(self._session.scenario_def)
+        forces = list_forces(self._session.scenario_def)
+        self._objects_panel.set_items(self._session.scenario_def, particles, forces)
+        if particles:
+            self._objects_panel.select_object(particles[0])
+            self._on_object_selected(particles[0])
+        elif forces:
+            self._objects_panel.select_object(forces[0])
+            self._on_object_selected(forces[0])
         else:
             self._objects_panel.select_object(None)
             self._on_object_selected(None)
 
     def _on_object_selected(self, obj: ObjectRef | None) -> None:
-        if obj is None or obj.type != "particle":
+        if obj is None:
             self._viewport.set_selected_particles([])
             self._inspector.set_target(self._session.scenario_def, None)
             return
-        self._viewport.set_selected_particles([obj.index])
+        if obj.type == "particle":
+            self._viewport.set_selected_particles([obj.index])
+        else:
+            self._viewport.set_selected_particles([])
         if self._inspector.isVisible():
             self._inspector.set_target(self._session.scenario_def, obj)
 
@@ -349,11 +362,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_status()
         self._update_window_title()
 
+    def _on_add_uniform_gravity(self) -> None:
+        if self._session.scenario_def is None:
+            self._session.scenario_def = self._session.new_default()
+        index = add_uniform_gravity(self._session.scenario_def, [0.0, -9.81, 0.0])
+        obj = ObjectRef(type="force", index=index, subtype="uniform_gravity")
+        self._after_force_change(obj)
+
+    def _on_add_nbody_gravity(self) -> None:
+        if self._session.scenario_def is None:
+            self._session.scenario_def = self._session.new_default()
+        index = add_nbody_gravity(self._session.scenario_def, 1.0, 0.0, None)
+        obj = ObjectRef(type="force", index=index, subtype="nbody_gravity")
+        self._after_force_change(obj)
+
     def _on_remove_selected(self, obj: ObjectRef | None) -> None:
         if obj is None or self._session.scenario_def is None:
             return
         try:
-            remove_particle(self._session.scenario_def, obj.index)
+            if obj.type == "particle":
+                remove_particle(self._session.scenario_def, obj.index)
+            elif obj.type == "force":
+                remove_force(self._session.scenario_def, obj.index)
+            else:
+                return
         except Exception as exc:  # pragma: no cover - Qt error path
             QtWidgets.QMessageBox.critical(self, "Remove Failed", str(exc))
             return
@@ -379,6 +411,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_state_to_viewport()
         self._refresh_objects_panel()
         self._objects_panel.select_object(obj)
+        self._update_action_state()
+        self._update_status()
+        self._update_window_title()
+
+    def _after_force_change(self, obj: ObjectRef) -> None:
+        self._session.mark_dirty()
+        self._controller.load_definition(self._session.scenario_def)
+        self._controller.scenario_path = self._session.scenario_path
+        self._running = False
+        self._apply_state_to_viewport()
+        self._refresh_objects_panel()
+        self._objects_panel.select_object(obj)
+        self._inspector.set_target(self._session.scenario_def, obj)
         self._update_action_state()
         self._update_status()
         self._update_window_title()
