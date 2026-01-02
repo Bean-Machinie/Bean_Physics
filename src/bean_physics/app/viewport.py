@@ -5,10 +5,42 @@ from __future__ import annotations
 import numpy as np
 from PySide6 import QtWidgets
 from vispy import app, scene
+from vispy.util import keys
 
 from .viz_utils import compute_bounds, compute_selection_bounds
 
 app.use_app("pyside6")
+
+
+class SpacePanTurntableCamera(scene.TurntableCamera):
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self._space_pan = False
+
+    def viewbox_key_event(self, event: object) -> None:
+        if getattr(event, "key", None) == keys.SPACE:
+            self._space_pan = event.type == "key_press"
+            event.handled = True
+            return
+        super().viewbox_key_event(event)
+
+    def viewbox_mouse_event(self, event: object) -> None:
+        if (
+            self._space_pan
+            and getattr(event, "type", None) in {"mouse_move", "mouse_press", "mouse_release"}
+            and 1 in event.buttons
+        ):
+            mouse_event = event.mouse_event
+            prev_mods = mouse_event._modifiers
+            if keys.SHIFT not in prev_mods:
+                mouse_event._modifiers = tuple(prev_mods) + (keys.SHIFT,)
+            try:
+                super().viewbox_mouse_event(event)
+            finally:
+                mouse_event._modifiers = prev_mods
+            event.handled = True
+            return
+        super().viewbox_mouse_event(event)
 
 
 class ViewportWidget(QtWidgets.QWidget):
@@ -21,7 +53,7 @@ class ViewportWidget(QtWidgets.QWidget):
             size=(800, 600),
         )
         self._view = self._canvas.central_widget.add_view()
-        self._view.camera = scene.TurntableCamera(
+        self._view.camera = SpacePanTurntableCamera(
             fov=45, azimuth=45, elevation=25, distance=6
         )
 
