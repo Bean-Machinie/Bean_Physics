@@ -7,6 +7,8 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from .viewport import ViewportWidget
 from .sim_controller import SimulationController
 from .session import ScenarioSession
+from .panels.particles_panel import ParticlesPanel
+from .panels.particles_utils import particles_to_rows, rows_to_particles
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -24,6 +26,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._viewport = ViewportWidget(self)
         self.setCentralWidget(self._viewport)
+
+        self._particles_panel = ParticlesPanel(self)
+        self._particles_panel.apply_requested.connect(self._on_particles_apply)
 
         self._build_docks()
         self._build_toolbar()
@@ -90,13 +95,13 @@ class MainWindow(QtWidgets.QMainWindow):
         toolbar.addAction(self._action_reset)
 
     def _build_docks(self) -> None:
-        scenario = QtWidgets.QDockWidget("Scenario", self)
-        scenario.setWidget(self._placeholder("Scenario panel (coming soon)"))
-        scenario.setAllowedAreas(
+        particles = QtWidgets.QDockWidget("Particles", self)
+        particles.setWidget(self._particles_panel)
+        particles.setAllowedAreas(
             QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
             | QtCore.Qt.DockWidgetArea.RightDockWidgetArea
         )
-        self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, scenario)
+        self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, particles)
 
         inspector = QtWidgets.QDockWidget("Inspector", self)
         inspector.setWidget(self._placeholder("Inspector panel (coming soon)"))
@@ -138,6 +143,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._timer.isActive():
             self._timer.start()
         self._apply_state_to_viewport()
+        self._refresh_particles_panel()
         self._update_action_state()
         self._update_status()
         self._update_window_title()
@@ -165,6 +171,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._timer.start()
         self._running = False
         self._apply_state_to_viewport()
+        self._refresh_particles_panel()
         self._update_action_state()
         self._update_status()
         self._update_window_title()
@@ -283,6 +290,30 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setWindowTitle("Bean Physics")
             return
         self.setWindowTitle(self._session.window_title())
+
+    def _refresh_particles_panel(self) -> None:
+        if self._session.scenario_def is None:
+            self._particles_panel.set_rows([])
+            return
+        self._particles_panel.set_rows(
+            particles_to_rows(self._session.scenario_def)
+        )
+
+    def _on_particles_apply(self, rows: list) -> None:
+        if self._session.scenario_def is None:
+            return
+        try:
+            rows_to_particles(self._session.scenario_def, rows)
+        except Exception as exc:  # pragma: no cover - Qt error path
+            QtWidgets.QMessageBox.critical(self, "Invalid Particles", str(exc))
+            return
+        self._session.mark_dirty()
+        self._controller.load_definition(self._session.scenario_def)
+        self._controller.scenario_path = self._session.scenario_path
+        self._running = False
+        self._apply_state_to_viewport()
+        self._update_status()
+        self._update_window_title()
 
     def _confirm_discard_if_dirty(self) -> bool:
         if not self._session.is_dirty:
