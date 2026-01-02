@@ -26,6 +26,7 @@ class ViewportWidget(QtWidgets.QWidget):
         self._axis = scene.visuals.XYZAxis(parent=self._view.scene)
         self._grid = scene.visuals.GridLines(parent=self._view.scene, color=(1, 1, 1, 0.08))
         self._particles = scene.visuals.Markers(parent=self._view.scene)
+        self._rigid_markers = scene.visuals.Markers(parent=self._view.scene)
 
         self._init_dummy_particles()
 
@@ -40,6 +41,8 @@ class ViewportWidget(QtWidgets.QWidget):
 
     def set_particles(self, pos: np.ndarray) -> None:
         pos = np.asarray(pos, dtype=np.float32)
+        if pos.size == 0:
+            pos = np.zeros((0, 3), dtype=np.float32)
         if pos.ndim != 2 or pos.shape[1] != 3:
             raise ValueError("pos must have shape (N, 3)")
         self._particles.set_data(
@@ -50,4 +53,15 @@ class ViewportWidget(QtWidgets.QWidget):
         )
 
     def set_rigid_bodies(self, pos: np.ndarray, quat: np.ndarray) -> None:
-        _ = (pos, quat)
+        _ = quat
+        pos = np.asarray(pos, dtype=np.float32)
+        if pos.size == 0:
+            pos = np.zeros((0, 3), dtype=np.float32)
+        if pos.ndim != 2 or pos.shape[1] != 3:
+            raise ValueError("pos must have shape (M, 3)")
+        self._rigid_markers.set_data(
+            pos,
+            face_color=(1.0, 0.5, 0.2, 0.9),
+            edge_color=None,
+            size=8,
+        )
