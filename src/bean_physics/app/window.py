@@ -6,15 +6,16 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .viewport import ViewportWidget
 from .sim_controller import SimulationController
+from .session import ScenarioSession
 
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Bean Physics")
         self.resize(1200, 800)
 
         self._controller = SimulationController()
+        self._session = ScenarioSession()
         self._running = False
         self._substeps_per_tick = 1
         self._timer = QtCore.QTimer(self)
@@ -26,6 +27,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._build_docks()
         self._build_toolbar()
+        self._build_menus()
+        self._update_window_title()
         self.statusBar().showMessage("Ready")
 
     def _build_toolbar(self) -> None:
@@ -34,13 +37,23 @@ class MainWindow(QtWidgets.QMainWindow):
         toolbar.setIconSize(QtCore.QSize(18, 18))
         self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, toolbar)
 
+        self._action_new = QtGui.QAction("New", self)
+        self._action_new.triggered.connect(self._on_new)
+        toolbar.addAction(self._action_new)
+
         self._action_load = QtGui.QAction("Load", self)
         self._action_load.triggered.connect(self._on_load)
         toolbar.addAction(self._action_load)
 
         self._action_save = QtGui.QAction("Save", self)
         self._action_save.setEnabled(False)
+        self._action_save.triggered.connect(self._on_save)
         toolbar.addAction(self._action_save)
+
+        self._action_save_as = QtGui.QAction("Save As", self)
+        self._action_save_as.setEnabled(False)
+        self._action_save_as.triggered.connect(self._on_save_as)
+        toolbar.addAction(self._action_save_as)
 
         toolbar.addSeparator()
 
@@ -93,6 +106,14 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.addDockWidget(QtCore.Qt.DockWidgetArea.RightDockWidgetArea, inspector)
 
+    def _build_menus(self) -> None:
+        file_menu = self.menuBar().addMenu("&File")
+        file_menu.addAction(self._action_new)
+        file_menu.addAction(self._action_load)
+        file_menu.addSeparator()
+        file_menu.addAction(self._action_save)
+        file_menu.addAction(self._action_save_as)
+
     @staticmethod
     def _placeholder(text: str) -> QtWidgets.QWidget:
         label = QtWidgets.QLabel(text)
@@ -105,7 +126,25 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addStretch(1)
         return container
 
+    def _on_new(self) -> None:
+        if not self._confirm_discard_if_dirty():
+            return
+        self._session.scenario_def = self._session.new_default()
+        self._session.scenario_path = None
+        self._session.is_dirty = True
+        self._controller.load_definition(self._session.scenario_def)
+        self._controller.scenario_path = None
+        self._running = False
+        if not self._timer.isActive():
+            self._timer.start()
+        self._apply_state_to_viewport()
+        self._update_action_state()
+        self._update_status()
+        self._update_window_title()
+
     def _on_load(self) -> None:
+        if not self._confirm_discard_if_dirty():
+            return
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
             "Load Scenario",
@@ -115,7 +154,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if not path:
             return
         try:
-            self._controller.load_scenario(path)
+            self._session.load(path)
+            if self._session.scenario_def is not None:
+                self._controller.load_definition(self._session.scenario_def)
+                self._controller.scenario_path = self._session.scenario_path
         except Exception as exc:  # pragma: no cover - Qt error path
             QtWidgets.QMessageBox.critical(self, "Load Failed", str(exc))
             return
@@ -125,6 +167,38 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_state_to_viewport()
         self._update_action_state()
         self._update_status()
+        self._update_window_title()
+
+    def _on_save(self) -> None:
+        if self._session.scenario_def is None:
+            return
+        if self._session.scenario_path is None:
+            self._on_save_as()
+            return
+        try:
+            self._session.save()
+        except Exception as exc:  # pragma: no cover - Qt error path
+            QtWidgets.QMessageBox.critical(self, "Save Failed", str(exc))
+            return
+        self._update_window_title()
+
+    def _on_save_as(self) -> None:
+        if self._session.scenario_def is None:
+            return
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save Scenario As",
+            "",
+            "Scenario JSON (*.json)",
+        )
+        if not path:
+            return
+        try:
+            self._session.save_as(path)
+        except Exception as exc:  # pragma: no cover - Qt error path
+            QtWidgets.QMessageBox.critical(self, "Save Failed", str(exc))
+            return
+        self._update_window_title()
 
     def _on_run(self) -> None:
         if not self._controller.can_step():
@@ -181,6 +255,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._action_pause.setEnabled(loaded and self._running)
         self._action_step.setEnabled(loaded and not self._running and can_step)
         self._action_reset.setEnabled(loaded)
+        has_session = self._session.scenario_def is not None
+        self._action_save.setEnabled(has_session)
+        self._action_save_as.setEnabled(has_session)
 
     def _update_status(self) -> None:
         info = self._controller.diagnostics()
@@ -200,6 +277,37 @@ class MainWindow(QtWidgets.QMainWindow):
         if energy is not None:
             msg += f"  E={energy:.6f}"
         self.statusBar().showMessage(msg)
+
+    def _update_window_title(self) -> None:
+        if self._session.scenario_def is None:
+            self.setWindowTitle("Bean Physics")
+            return
+        self.setWindowTitle(self._session.window_title())
+
+    def _confirm_discard_if_dirty(self) -> bool:
+        if not self._session.is_dirty:
+            return True
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+        box.setWindowTitle("Unsaved Changes")
+        box.setText("You have unsaved changes. Save before continuing?")
+        box.setStandardButtons(
+            QtWidgets.QMessageBox.StandardButton.Save
+            | QtWidgets.QMessageBox.StandardButton.Discard
+            | QtWidgets.QMessageBox.StandardButton.Cancel
+        )
+        choice = box.exec()
+        if choice == QtWidgets.QMessageBox.StandardButton.Cancel:
+            return False
+        if choice == QtWidgets.QMessageBox.StandardButton.Discard:
+            return True
+        if choice == QtWidgets.QMessageBox.StandardButton.Save:
+            if self._session.scenario_path is None:
+                self._on_save_as()
+            else:
+                self._on_save()
+            return not self._session.is_dirty
+        return False
 
 
 def compute_sim_rate(dt: float, steps_per_frame: int, fps: float = 60.0) -> float:

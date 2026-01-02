@@ -35,8 +35,11 @@ class SimulationController:
     def load_scenario(self, path: str | Path) -> None:
         scenario_path = Path(path)
         defn = load_scenario(scenario_path)
-        state, model, integrator, dt, steps, aux = scenario_to_runtime(defn)
+        self.load_definition(defn)
         self.scenario_path = scenario_path
+
+    def load_definition(self, defn: dict[str, Any]) -> None:
+        state, model, integrator, dt, steps, aux = scenario_to_runtime(defn)
         self.scenario_def = defn
         self.runtime = SimulationRuntime(
             state=state,
