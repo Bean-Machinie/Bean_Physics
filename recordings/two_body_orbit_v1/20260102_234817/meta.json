@@ -1,0 +1,28 @@
+{
+  "scenario_path": "E:\\Space_App\\Bean_Physics\\examples\\scenarios\\two_body_orbit_v1.json",
+  "scenario_name": "Two-body orbit",
+  "dt": 0.001,
+  "steps_per_frame": 8,
+  "timer_fps": 60.0,
+  "camera": {
+    "center": [
+      0.23258522152900696,
+      -1.0044662952423096,
+      0.0
+    ],
+    "distance": 1.3310000000000004,
+    "fov": 45.0
+  },
+  "follow_enabled": true,
+  "trails": {
+    "enabled": true,
+    "length": 500,
+    "stride": 1
+  },
+  "labels": {
+    "enabled": false
+  },
+  "frames_written": 1156,
+  "start_wall_time": "2026-01-02T23:48:17.869307",
+  "video_path": "recordings\\two_body_orbit_v1\\20260102_234817\\recording.mp4"
+}

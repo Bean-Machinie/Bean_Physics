@@ -30,3 +30,9 @@ Forces:
 - Use the `Objects` dock buttons to add Uniform Gravity or N-body Gravity.
 - Select a force and double-click to edit its parameters in the Object Details inspector.
 - Clicking `Apply` updates the scenario, resets the simulation, and marks the session dirty.
+
+Recording:
+
+- Use `Record` in the toolbar to capture an MP4 video (requires `ffmpeg` on PATH).
+- `Output Folder` chooses the base directory (defaults to `./recordings`).
+- `Capture Every` controls the stride; metadata is saved in `meta.json`.

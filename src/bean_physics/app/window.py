@@ -4,6 +4,15 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+import json
+import shutil
+import subprocess
+from datetime import datetime
+from pathlib import Path
+from queue import Queue
+from threading import Thread
+
+
 from .viewport import ViewportWidget
 from .sim_controller import SimulationController
 from .session import ScenarioSession
@@ -19,6 +28,7 @@ from .panels.objects_utils import (
     remove_particle,
 )
 from .inspector import ObjectInspector
+from .recording_utils import build_metadata, make_recording_paths, video_filename
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -47,6 +57,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._inspector = ObjectInspector(self)
         self._inspector.applied.connect(self._on_inspector_applied)
+
+        self._recording_enabled = False
+        self._recording_stride = 1
+        self._recording_frame = 0
+        self._recording_paths = None
+        self._recording_start = None
+        self._recording_queue: Queue[object | None] | None = None
+        self._recording_thread: Thread | None = None
+        self._recording_video_path: Path | None = None
+        self._recording_base_dir = Path("recordings")
 
         self._build_docks()
         self._build_toolbar()
@@ -97,6 +117,29 @@ class MainWindow(QtWidgets.QMainWindow):
         self._labels_toggle.setCheckable(True)
         self._labels_toggle.toggled.connect(self._on_labels_toggled)
         self._toolbar.addWidget(self._labels_toggle)
+
+        self._toolbar.addSeparator()
+
+        self._record_toggle = QtWidgets.QToolButton(self)
+        self._record_toggle.setText("Record")
+        self._record_toggle.setCheckable(True)
+        self._record_toggle.toggled.connect(self._on_record_toggled)
+        self._toolbar.addWidget(self._record_toggle)
+
+        self._record_output = QtWidgets.QToolButton(self)
+        self._record_output.setText("Output Folder")
+        self._record_output.clicked.connect(self._on_record_output)
+        self._toolbar.addWidget(self._record_output)
+
+        stride_label = QtWidgets.QLabel("Capture Every")
+        stride_label.setContentsMargins(6, 0, 6, 0)
+        self._toolbar.addWidget(stride_label)
+
+        self._record_stride_spin = QtWidgets.QSpinBox(self)
+        self._record_stride_spin.setRange(1, 1000)
+        self._record_stride_spin.setValue(self._recording_stride)
+        self._record_stride_spin.valueChanged.connect(self._on_record_stride_changed)
+        self._toolbar.addWidget(self._record_stride_spin)
 
         self._toolbar.addSeparator()
 
@@ -274,6 +317,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_step(self) -> None:
         if self._controller.step_once():
             self._apply_state_to_viewport()
+            self._capture_recording_frame()
         self._update_action_state()
         self._update_status()
 
@@ -295,6 +339,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 stepped = True
             if stepped:
                 self._apply_state_to_viewport()
+                self._capture_recording_frame()
         self._update_action_state()
         self._update_status()
 
@@ -339,6 +384,11 @@ class MainWindow(QtWidgets.QMainWindow):
         energy = info.get("energy")
         if energy is not None:
             msg += f"  E={energy:.6f}"
+        if self._recording_enabled and self._recording_paths is not None:
+            msg += (
+                f"  REC {self._recording_frame}  "
+                f"{self._recording_paths.run_dir}"
+            )
         self.statusBar().showMessage(msg)
 
     def _update_window_title(self) -> None:
@@ -494,6 +544,105 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_labels_toggled(self, enabled: bool) -> None:
         self._viewport.set_labels_enabled(enabled)
 
+    def _on_record_toggled(self, enabled: bool) -> None:
+        if enabled:
+            if self._controller.runtime is None:
+                self._record_toggle.setChecked(False)
+                return
+            try:
+                self._start_recording()
+            except Exception as exc:  # pragma: no cover - Qt error path
+                QtWidgets.QMessageBox.critical(self, "Recording Failed", str(exc))
+                self._record_toggle.setChecked(False)
+        else:
+            self._stop_recording()
+
+    def _on_record_output(self) -> None:
+        path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Select Recording Output Folder"
+        )
+        if not path:
+            return
+        self._recording_base_dir = Path(path)
+
+    def _on_record_stride_changed(self, value: int) -> None:
+        self._recording_stride = value
+
+    def _start_recording(self) -> None:
+        if shutil.which("ffmpeg") is None:
+            raise RuntimeError(
+                "Recording requires ffmpeg on PATH. Install ffmpeg and retry."
+            )
+        paths = make_recording_paths(
+            self._recording_base_dir,
+            self._session.scenario_path,
+        )
+        paths.frames_dir.mkdir(parents=True, exist_ok=True)
+        self._recording_paths = paths
+        self._recording_frame = 0
+        self._recording_start = datetime.now().isoformat()
+        self._recording_queue = Queue()
+        self._recording_video_path = paths.run_dir / video_filename()
+        self._recording_thread = Thread(
+            target=_recording_worker,
+            args=(self._recording_queue, self._recording_video_path),
+            daemon=True,
+        )
+        self._recording_thread.start()
+        self._recording_enabled = True
+
+    def _stop_recording(self) -> None:
+        if not self._recording_enabled:
+            return
+        if self._recording_queue is not None:
+            self._recording_queue.put(None)
+        if self._recording_thread is not None:
+            self._recording_thread.join(timeout=5.0)
+        self._write_recording_metadata()
+        self._recording_enabled = False
+        self._recording_queue = None
+        self._recording_thread = None
+        self._recording_video_path = None
+
+    def _capture_recording_frame(self) -> None:
+        if not self._recording_enabled or self._recording_paths is None:
+            return
+        if self._recording_frame % self._recording_stride != 0:
+            self._recording_frame += 1
+            return
+        frame = self._viewport.capture_frame_rgba()
+        if self._recording_queue is not None:
+            self._recording_queue.put(frame)
+        self._recording_frame += 1
+
+    def _write_recording_metadata(self) -> None:
+        if self._recording_paths is None or self._recording_start is None:
+            return
+        runtime = self._controller.runtime
+        if runtime is None:
+            return
+        scenario_name = None
+        if self._session.scenario_def is not None:
+            meta = self._session.scenario_def.get("metadata", {})
+            scenario_name = meta.get("name")
+        data = build_metadata(
+            scenario_path=self._session.scenario_path,
+            scenario_name=scenario_name,
+            dt=runtime.dt,
+            steps_per_frame=self._substeps_per_tick,
+            timer_fps=60.0,
+            camera=self._viewport.camera_state(),
+            trails=self._viewport.trails_state(),
+            labels=self._viewport.labels_state(),
+            follow_enabled=self._viewport.follow_enabled(),
+            frames_written=self._recording_frame,
+            start_wall_time=self._recording_start,
+        )
+        if self._recording_video_path is not None:
+            data["video_path"] = str(self._recording_video_path)
+        meta_path = self._recording_paths.run_dir / "meta.json"
+        meta_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
     def _confirm_discard_if_dirty(self) -> bool:
         if not self._session.is_dirty:
             return True
@@ -522,3 +671,48 @@ class MainWindow(QtWidgets.QMainWindow):
 
 def compute_sim_rate(dt: float, steps_per_frame: int, fps: float = 60.0) -> float:
     return dt * steps_per_frame * fps
+
+
+def _recording_worker(queue: Queue[object | None], video_path: Path) -> None:
+    proc: subprocess.Popen[bytes] | None = None
+    while True:
+        item = queue.get()
+        if item is None:
+            break
+        frame = item
+        if proc is None:
+            height, width = frame.shape[0], frame.shape[1]
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "rawvideo",
+                "-vcodec",
+                "rawvideo",
+                "-pix_fmt",
+                "rgba",
+                "-s",
+                f"{width}x{height}",
+                "-r",
+                "60",
+                "-i",
+                "-",
+                "-an",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "medium",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                str(video_path),
+            ]
+            proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        if proc is not None and proc.stdin is not None:
+            proc.stdin.write(frame.tobytes())
+    if proc is not None and proc.stdin is not None:
+        proc.stdin.close()
+        proc.wait(timeout=10.0)

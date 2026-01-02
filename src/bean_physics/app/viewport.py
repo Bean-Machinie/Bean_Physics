@@ -152,6 +152,35 @@ class ViewportWidget(QtWidgets.QWidget):
         self._label.visible = enabled
         self._update_labels()
 
+    def capture_frame_rgba(self) -> np.ndarray:
+        image = self._canvas.render(alpha=True)
+        return np.asarray(image, dtype=np.uint8)
+
+    def camera_state(self) -> dict[str, object]:
+        camera = self._view.camera
+        if camera is None:
+            return {}
+        return {
+            "center": [float(v) for v in camera.center],
+            "distance": float(camera.distance),
+            "fov": float(getattr(camera, "fov", 0.0)),
+        }
+
+    def trails_state(self) -> dict[str, object]:
+        return {
+            "enabled": self._trail_enabled,
+            "length": self._trail_length,
+            "stride": self._trail_stride,
+        }
+
+    def labels_state(self) -> dict[str, object]:
+        return {
+            "enabled": self._labels_enabled,
+        }
+
+    def follow_enabled(self) -> bool:
+        return self._follow_selection
+
     def frame_all(self, pos: np.ndarray) -> None:
         center, radius = compute_bounds(np.asarray(pos, dtype=np.float32))
         self._frame(center, radius)
