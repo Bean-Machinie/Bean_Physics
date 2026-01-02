@@ -38,11 +38,11 @@ def test_quat_composition() -> None:
 
 def test_quat_integrate_expmap_norm_stays_1() -> None:
     q = np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float64)
-    omega = np.array([[0.1, -0.2, 0.3]], dtype=np.float64)
+    omega_body = np.array([[0.1, -0.2, 0.3]], dtype=np.float64)
     dt = 0.01
 
     for _ in range(1000):
-        q = quat_integrate_expmap(q, omega, dt)
+        q = quat_integrate_expmap(q, omega_body, dt)
 
     n = np.linalg.norm(q, axis=-1)
     assert np.allclose(n, 1.0, atol=1e-10)

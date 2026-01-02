@@ -21,7 +21,7 @@ class Model(Protocol):
         """Return rigid body CoM accelerations as (M, 3)."""
 
     def alpha_rigid(self, state: SystemState) -> ArrayF:
-        """Return rigid body angular accelerations as (M, 3)."""
+        """Return rigid body angular accelerations (body frame) as (M, 3)."""
 
 
 class ParticleModel(Protocol):

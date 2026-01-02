@@ -5,7 +5,7 @@ Conventions:
 - Quaternion represents body->world rotation.
 - Vector rotation: v_world = R(q) * v_body
 - Composition: applying q1 then q2 is q = quat_mul(q2, q1)
-- Angular velocity is expressed in WORLD frame.
+- Angular velocity for rigid bodies is expressed in BODY frame.
 """
 
 from __future__ import annotations
@@ -106,15 +106,15 @@ def quat_from_axis_angle(axis: ArrayF, angle_rad: ArrayF) -> ArrayF:
     return np.concatenate([w, xyz], axis=-1)
 
 
-def quat_integrate_expmap(q: ArrayF, omega_world: ArrayF, dt: float) -> ArrayF:
+def quat_integrate_expmap(q: ArrayF, omega_body: ArrayF, dt: float) -> ArrayF:
     """Integrate orientation using exponential map.
 
-    For body->world quaternions with world-frame angular velocity, the update is:
-        q_next = quat_mul(delta_q, q)
+    For body->world quaternions with body-frame angular velocity, the update is:
+        q_next = quat_mul(q, delta_q)
     """
     q = np.asarray(q, dtype=np.float64)
-    omega_world = np.asarray(omega_world, dtype=np.float64)
-    angle = norm(omega_world, axis=-1) * dt
-    delta_q = quat_from_axis_angle(omega_world, angle)
-    q_next = quat_mul(delta_q, q)
+    omega_body = np.asarray(omega_body, dtype=np.float64)
+    angle = norm(omega_body, axis=-1) * dt
+    delta_q = quat_from_axis_angle(omega_body, angle)
+    q_next = quat_mul(q, delta_q)
     return quat_normalize(q_next)

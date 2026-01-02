@@ -15,6 +15,10 @@ ArrayF = NDArray[np.float64]
 
 @dataclass(slots=True)
 class RigidBodiesState:
+    """Rigid body kinematic state.
+
+    omega is stored in the BODY frame (omega_body).
+    """
     pos: ArrayF
     vel: ArrayF
     quat: ArrayF
