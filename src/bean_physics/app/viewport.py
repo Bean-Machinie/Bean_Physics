@@ -27,6 +27,10 @@ class ViewportWidget(QtWidgets.QWidget):
         self._grid = scene.visuals.GridLines(parent=self._view.scene, color=(1, 1, 1, 0.08))
         self._particles = scene.visuals.Markers(parent=self._view.scene)
         self._rigid_markers = scene.visuals.Markers(parent=self._view.scene)
+        self._selected_particles = scene.visuals.Markers(parent=self._view.scene)
+        self._selected_particles.set_gl_state("translucent", depth_test=False)
+        self._selected_indices: list[int] = []
+        self._last_particle_pos = np.zeros((0, 3), dtype=np.float32)
 
         self._init_dummy_particles()
 
@@ -45,12 +49,14 @@ class ViewportWidget(QtWidgets.QWidget):
             pos = np.zeros((0, 3), dtype=np.float32)
         if pos.ndim != 2 or pos.shape[1] != 3:
             raise ValueError("pos must have shape (N, 3)")
+        self._last_particle_pos = pos
         self._particles.set_data(
             pos,
             face_color=(0.2, 0.8, 1.0, 0.9),
             edge_color=None,
             size=6,
         )
+        self._update_selected_particles()
 
     def set_rigid_bodies(self, pos: np.ndarray, quat: np.ndarray) -> None:
         _ = quat
@@ -64,4 +70,34 @@ class ViewportWidget(QtWidgets.QWidget):
             face_color=(1.0, 0.5, 0.2, 0.9),
             edge_color=None,
             size=8,
+        )
+
+    def set_selected_particles(self, indices: list[int]) -> None:
+        self._selected_indices = indices
+        self._update_selected_particles()
+
+    def _update_selected_particles(self) -> None:
+        if not self._selected_indices:
+            self._selected_particles.set_data(
+                np.zeros((0, 3), dtype=np.float32),
+                face_color=(1.0, 1.0, 0.2, 1.0),
+                edge_color=None,
+                size=10,
+            )
+            return
+        idx = [i for i in self._selected_indices if 0 <= i < self._last_particle_pos.shape[0]]
+        if not idx:
+            self._selected_particles.set_data(
+                np.zeros((0, 3), dtype=np.float32),
+                face_color=(1.0, 1.0, 0.2, 1.0),
+                edge_color=None,
+                size=10,
+            )
+            return
+        pos = self._last_particle_pos[idx]
+        self._selected_particles.set_data(
+            pos,
+            face_color=(1.0, 1.0, 0.2, 1.0),
+            edge_color=None,
+            size=10,
         )

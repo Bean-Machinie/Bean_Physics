@@ -7,8 +7,14 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from .viewport import ViewportWidget
 from .sim_controller import SimulationController
 from .session import ScenarioSession
-from .panels.particles_panel import ParticlesPanel
-from .panels.particles_utils import particles_to_rows, rows_to_particles
+from .panels.objects_panel import ObjectsPanel
+from .panels.objects_utils import (
+    ObjectRef,
+    add_particle,
+    list_particles,
+    remove_particle,
+)
+from .inspector import ObjectInspector
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -27,8 +33,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._viewport = ViewportWidget(self)
         self.setCentralWidget(self._viewport)
 
-        self._particles_panel = ParticlesPanel(self)
-        self._particles_panel.apply_requested.connect(self._on_particles_apply)
+        self._objects_panel = ObjectsPanel(self)
+        self._objects_panel.selection_changed.connect(self._on_object_selected)
+        self._objects_panel.item_activated.connect(self._on_object_activated)
+        self._objects_panel.add_requested.connect(self._on_add_particle)
+        self._objects_panel.remove_requested.connect(self._on_remove_selected)
+
+        self._inspector = ObjectInspector(self)
+        self._inspector.applied.connect(self._on_inspector_applied)
 
         self._build_docks()
         self._build_toolbar()
@@ -37,99 +49,90 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("Ready")
 
     def _build_toolbar(self) -> None:
-        toolbar = QtWidgets.QToolBar("Main", self)
-        toolbar.setMovable(False)
-        toolbar.setIconSize(QtCore.QSize(18, 18))
-        self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, toolbar)
-
-        self._action_new = QtGui.QAction("New", self)
-        self._action_new.triggered.connect(self._on_new)
-        toolbar.addAction(self._action_new)
-
-        self._action_load = QtGui.QAction("Load", self)
-        self._action_load.triggered.connect(self._on_load)
-        toolbar.addAction(self._action_load)
-
-        self._action_save = QtGui.QAction("Save", self)
-        self._action_save.setEnabled(False)
-        self._action_save.triggered.connect(self._on_save)
-        toolbar.addAction(self._action_save)
-
-        self._action_save_as = QtGui.QAction("Save As", self)
-        self._action_save_as.setEnabled(False)
-        self._action_save_as.triggered.connect(self._on_save_as)
-        toolbar.addAction(self._action_save_as)
-
-        toolbar.addSeparator()
+        self._toolbar = QtWidgets.QToolBar("Main", self)
+        self._toolbar.setMovable(False)
+        self._toolbar.setIconSize(QtCore.QSize(18, 18))
+        self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, self._toolbar)
 
         steps_label = QtWidgets.QLabel("Steps/Frame")
         steps_label.setContentsMargins(6, 0, 6, 0)
-        toolbar.addWidget(steps_label)
+        self._toolbar.addWidget(steps_label)
 
         self._steps_spin = QtWidgets.QSpinBox(self)
         self._steps_spin.setRange(1, 200)
         self._steps_spin.setValue(self._substeps_per_tick)
         self._steps_spin.valueChanged.connect(self._on_steps_per_frame_changed)
-        toolbar.addWidget(self._steps_spin)
+        self._toolbar.addWidget(self._steps_spin)
 
-        toolbar.addSeparator()
+        self._toolbar.addSeparator()
 
         self._action_run = QtGui.QAction("Run", self)
         self._action_run.setEnabled(False)
         self._action_run.triggered.connect(self._on_run)
-        toolbar.addAction(self._action_run)
+        self._toolbar.addAction(self._action_run)
 
         self._action_pause = QtGui.QAction("Pause", self)
         self._action_pause.setEnabled(False)
         self._action_pause.triggered.connect(self._on_pause)
-        toolbar.addAction(self._action_pause)
+        self._toolbar.addAction(self._action_pause)
 
         self._action_step = QtGui.QAction("Step", self)
         self._action_step.setEnabled(False)
         self._action_step.triggered.connect(self._on_step)
-        toolbar.addAction(self._action_step)
+        self._toolbar.addAction(self._action_step)
 
         self._action_reset = QtGui.QAction("Reset", self)
         self._action_reset.setEnabled(False)
         self._action_reset.triggered.connect(self._on_reset)
-        toolbar.addAction(self._action_reset)
+        self._toolbar.addAction(self._action_reset)
 
     def _build_docks(self) -> None:
-        particles = QtWidgets.QDockWidget("Particles", self)
-        particles.setWidget(self._particles_panel)
-        particles.setAllowedAreas(
+        objects = QtWidgets.QDockWidget("Objects", self)
+        objects.setWidget(self._objects_panel)
+        objects.setAllowedAreas(
             QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
             | QtCore.Qt.DockWidgetArea.RightDockWidgetArea
         )
-        self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, particles)
-
-        inspector = QtWidgets.QDockWidget("Inspector", self)
-        inspector.setWidget(self._placeholder("Inspector panel (coming soon)"))
-        inspector.setAllowedAreas(
-            QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
-            | QtCore.Qt.DockWidgetArea.RightDockWidgetArea
-        )
-        self.addDockWidget(QtCore.Qt.DockWidgetArea.RightDockWidgetArea, inspector)
+        self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, objects)
 
     def _build_menus(self) -> None:
-        file_menu = self.menuBar().addMenu("&File")
+        self._action_new = QtGui.QAction("New", self)
+        self._action_new.setShortcut(QtGui.QKeySequence.New)
+        self._action_new.triggered.connect(self._on_new)
+
+        self._action_load = QtGui.QAction("Load", self)
+        self._action_load.setShortcut(QtGui.QKeySequence.Open)
+        self._action_load.triggered.connect(self._on_load)
+
+        self._action_save = QtGui.QAction("Save", self)
+        self._action_save.setShortcut(QtGui.QKeySequence.Save)
+        self._action_save.setEnabled(False)
+        self._action_save.triggered.connect(self._on_save)
+
+        self._action_save_as = QtGui.QAction("Save As", self)
+        self._action_save_as.setShortcut(QtGui.QKeySequence.SaveAs)
+        self._action_save_as.setEnabled(False)
+        self._action_save_as.triggered.connect(self._on_save_as)
+
+        self.addAction(self._action_new)
+        self.addAction(self._action_load)
+        self.addAction(self._action_save)
+        self.addAction(self._action_save_as)
+
+        menu_bar = QtWidgets.QMenuBar(self)
+        menu_bar.setNativeMenuBar(False)
+        file_menu = menu_bar.addMenu("&File")
         file_menu.addAction(self._action_new)
         file_menu.addAction(self._action_load)
         file_menu.addSeparator()
         file_menu.addAction(self._action_save)
         file_menu.addAction(self._action_save_as)
 
-    @staticmethod
-    def _placeholder(text: str) -> QtWidgets.QWidget:
-        label = QtWidgets.QLabel(text)
-        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
-        label.setWordWrap(True)
-        container = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(container)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.addWidget(label)
-        layout.addStretch(1)
-        return container
+        if hasattr(self, "_toolbar"):
+            if self._toolbar.actions():
+                self._toolbar.insertWidget(self._toolbar.actions()[0], menu_bar)
+            else:
+                self._toolbar.addWidget(menu_bar)
 
     def _on_new(self) -> None:
         if not self._confirm_discard_if_dirty():
@@ -143,7 +146,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._timer.isActive():
             self._timer.start()
         self._apply_state_to_viewport()
-        self._refresh_particles_panel()
+        self._refresh_objects_panel()
+        if self._inspector.isVisible():
+            self._inspector.set_target(self._session.scenario_def, None)
         self._update_action_state()
         self._update_status()
         self._update_window_title()
@@ -171,7 +176,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._timer.start()
         self._running = False
         self._apply_state_to_viewport()
-        self._refresh_particles_panel()
+        self._refresh_objects_panel()
+        if self._inspector.isVisible():
+            self._inspector.set_target(self._session.scenario_def, None)
         self._update_action_state()
         self._update_status()
         self._update_window_title()
@@ -291,27 +298,88 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.setWindowTitle(self._session.window_title())
 
-    def _refresh_particles_panel(self) -> None:
+    def _refresh_objects_panel(self) -> None:
         if self._session.scenario_def is None:
-            self._particles_panel.set_rows([])
+            self._objects_panel.set_items({}, [])
+            self._objects_panel.select_object(None)
+            self._viewport.set_selected_particles([])
+            if self._inspector.isVisible():
+                self._inspector.set_target(self._session.scenario_def, None)
             return
-        self._particles_panel.set_rows(
-            particles_to_rows(self._session.scenario_def)
-        )
+        objects = list_particles(self._session.scenario_def)
+        self._objects_panel.set_items(self._session.scenario_def, objects)
+        if objects:
+            self._objects_panel.select_object(objects[0])
+            self._on_object_selected(objects[0])
+        else:
+            self._objects_panel.select_object(None)
+            self._on_object_selected(None)
 
-    def _on_particles_apply(self, rows: list) -> None:
+    def _on_object_selected(self, obj: ObjectRef | None) -> None:
+        if obj is None or obj.type != "particle":
+            self._viewport.set_selected_particles([])
+            self._inspector.set_target(self._session.scenario_def, None)
+            return
+        self._viewport.set_selected_particles([obj.index])
+        if self._inspector.isVisible():
+            self._inspector.set_target(self._session.scenario_def, obj)
+
+    def _on_object_activated(self, obj: ObjectRef | None) -> None:
+        if obj is None:
+            return
+        self._inspector.set_target(self._session.scenario_def, obj)
+        self._inspector.show()
+        self._inspector.raise_()
+        self._inspector.activateWindow()
+
+    def _on_add_particle(self) -> None:
         if self._session.scenario_def is None:
+            self._session.scenario_def = self._session.new_default()
+        index = add_particle(self._session.scenario_def)
+        self._session.mark_dirty()
+        self._controller.load_definition(self._session.scenario_def)
+        self._controller.scenario_path = self._session.scenario_path
+        self._running = False
+        self._apply_state_to_viewport()
+        self._refresh_objects_panel()
+        obj = ObjectRef(type="particle", index=index)
+        self._objects_panel.select_object(obj)
+        self._inspector.set_target(self._session.scenario_def, obj)
+        self._update_action_state()
+        self._update_status()
+        self._update_window_title()
+
+    def _on_remove_selected(self, obj: ObjectRef | None) -> None:
+        if obj is None or self._session.scenario_def is None:
             return
         try:
-            rows_to_particles(self._session.scenario_def, rows)
+            remove_particle(self._session.scenario_def, obj.index)
         except Exception as exc:  # pragma: no cover - Qt error path
-            QtWidgets.QMessageBox.critical(self, "Invalid Particles", str(exc))
+            QtWidgets.QMessageBox.critical(self, "Remove Failed", str(exc))
             return
         self._session.mark_dirty()
         self._controller.load_definition(self._session.scenario_def)
         self._controller.scenario_path = self._session.scenario_path
         self._running = False
         self._apply_state_to_viewport()
+        self._refresh_objects_panel()
+        if self._inspector.isVisible():
+            self._inspector.set_target(self._session.scenario_def, None)
+        self._update_action_state()
+        self._update_status()
+        self._update_window_title()
+
+    def _on_inspector_applied(self, obj: ObjectRef) -> None:
+        if self._session.scenario_def is None:
+            return
+        self._session.mark_dirty()
+        self._controller.load_definition(self._session.scenario_def)
+        self._controller.scenario_path = self._session.scenario_path
+        self._running = False
+        self._apply_state_to_viewport()
+        self._refresh_objects_panel()
+        self._objects_panel.select_object(obj)
+        self._update_action_state()
         self._update_status()
         self._update_window_title()
 

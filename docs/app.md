@@ -21,6 +21,6 @@ Usage:
 
 Editing particles:
 
-- Use the `Particles` dock to add or remove rows and edit x/y/z, vx/vy/vz, and mass.
-- Click `Apply` to write changes to the scenario and reset the simulation state.
+- Use the `Objects` dock to select particles; double-click a particle to open the Object Details inspector.
+- Edit position/velocity/mass in the inspector and click `Apply` to write changes and reset the simulation state.
 - Edits mark the session as dirty; remember to `Save` or `Save As` to persist them.
