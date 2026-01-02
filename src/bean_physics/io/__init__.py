@@ -1,0 +1,1 @@
+"""IO stubs for future scenario serialization."""
