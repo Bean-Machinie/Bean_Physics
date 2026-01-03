@@ -32,22 +32,35 @@ class SpacePanTurntableCamera(scene.TurntableCamera):
         super().viewbox_key_event(event)
 
     def viewbox_mouse_event(self, event: object) -> None:
-        if (
-            self._space_pan
-            and getattr(event, "type", None) in {"mouse_move", "mouse_press", "mouse_release"}
-            and 1 in event.buttons
-        ):
-            mouse_event = event.mouse_event
-            prev_mods = mouse_event._modifiers
-            if keys.SHIFT not in prev_mods:
-                mouse_event._modifiers = tuple(prev_mods) + (keys.SHIFT,)
-            try:
-                super().viewbox_mouse_event(event)
-            finally:
-                mouse_event._modifiers = prev_mods
-            event.handled = True
-            return
+        if self._space_pan and getattr(event, "type", None) == "mouse_move":
+            if event.press_event is None:
+                return
+            if 1 in event.buttons and keys.SHIFT not in event.mouse_event.modifiers:
+                norm = np.mean(self._viewbox.size)
+                if self._event_value is None or len(self._event_value) == 2:
+                    self._event_value = self.center
+                p1 = event.mouse_event.press_event.pos
+                p2 = event.mouse_event.pos
+                dist = (p1 - p2) / norm * self._scale_factor
+                dist[1] *= -1
+                dist *= self._pan_scale()
+                dx, dy, dz = self._dist_to_trans(dist)
+                ff = self._flip_factors
+                up, forward, right = self._get_dim_vectors()
+                dx, dy, dz = right * dx + forward * dy + up * dz
+                dx, dy, dz = ff[0] * dx, ff[1] * dy, dz * ff[2]
+                c = self._event_value
+                self.center = c[0] + dx, c[1] + dy, c[2] + dz
+                event.handled = True
+                return
         super().viewbox_mouse_event(event)
+
+    def _pan_scale(self) -> float:
+        scale = max(float(getattr(self, "_scale_factor", 1.0)), 1e-6)
+        dist = float(getattr(self, "_actual_distance", 0.0))
+        if dist <= 0.0:
+            return 1.0
+        return max(1.0, dist / scale)
 
 
 class ViewportWidget(QtWidgets.QWidget):
