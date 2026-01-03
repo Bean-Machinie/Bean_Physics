@@ -126,6 +126,35 @@ def test_force_world_migrates_to_body() -> None:
     assert np.allclose(rb_model.forces_body[0], expected)
 
 
+def test_visual_round_trip(tmp_path: Path) -> None:
+    defn = {
+        "schema_version": 1,
+        "simulation": {"dt": 0.01, "steps": 10, "integrator": "velocity_verlet"},
+        "entities": {
+            "particles": {
+                "pos": [[0.0, 0.0, 0.0]],
+                "vel": [[0.0, 0.0, 0.0]],
+                "mass": [1.0],
+                "visual": [
+                    {
+                        "kind": "mesh",
+                        "mesh_path": "models/planet.glb",
+                        "scale": [1.0, 2.0, 3.0],
+                        "offset_body": [0.0, 0.5, 0.0],
+                        "rotation_body_quat": [1.0, 0.0, 0.0, 0.0],
+                        "color_tint": [0.2, 0.4, 0.6],
+                    }
+                ],
+            }
+        },
+        "models": [],
+    }
+    out = tmp_path / "visual.json"
+    save_scenario(out, defn)
+    loaded = load_scenario(out)
+    assert _scenario_equal(defn, loaded)
+
+
 def test_determinism_two_body() -> None:
     defn = load_scenario("examples/scenarios/two_body_orbit_v1.json")
     state1, model1, integrator1, dt1, steps1, _ = scenario_to_runtime(defn)

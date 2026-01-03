@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Sequence
 
 import numpy as np
@@ -15,11 +16,16 @@ from .panels.objects_utils import (
     apply_uniform_gravity,
     force_summary,
     particle_summary,
+    particle_visual,
     rigid_body_force_points,
     rigid_body_summary,
+    rigid_body_visual,
     set_rigid_body_force_points,
+    set_particle_visual,
+    set_rigid_body_visual,
 )
 from ..core.rigid_body.mass_properties import rigid_body_from_points, shift_points_to_com
+from .visual_assets import loader_available
 
 
 class ObjectInspector(QtWidgets.QDialog):
@@ -31,6 +37,7 @@ class ObjectInspector(QtWidgets.QDialog):
         self.setModal(False)
         self._defn: dict | None = None
         self._obj: ObjectRef | None = None
+        self._scenario_path: Path | None = None
         self._updating_points = False
 
         self._stack = QtWidgets.QStackedWidget(self)
@@ -48,6 +55,14 @@ class ObjectInspector(QtWidgets.QDialog):
         particle_form.addRow("Position", _vector_widget(self._pos))
         particle_form.addRow("Velocity", _vector_widget(self._vel))
         particle_form.addRow("Mass", self._mass)
+        self._particle_visual = _build_visual_controls(self)
+        self._particle_visual["attach"].clicked.connect(
+            lambda: self._on_attach_visual(self._particle_visual)
+        )
+        self._particle_visual["clear"].clicked.connect(
+            lambda: self._on_clear_visual(self._particle_visual)
+        )
+        particle_form.addRow("Visual", self._particle_visual["container"])
         self._stack.addWidget(self._particle_page)
 
         self._uniform_page = QtWidgets.QWidget()
@@ -143,6 +158,14 @@ class ObjectInspector(QtWidgets.QDialog):
         rigid_form.addRow("Quat (w,x,y,z)", _vector_widget(self._rb_quat))
         rigid_form.addRow("Omega body", _vector_widget(self._rb_omega))
         rigid_form.addRow("Inertia diag", _vector_widget(self._rb_inertia))
+        self._rigid_visual = _build_visual_controls(self)
+        self._rigid_visual["attach"].clicked.connect(
+            lambda: self._on_attach_visual(self._rigid_visual)
+        )
+        self._rigid_visual["clear"].clicked.connect(
+            lambda: self._on_clear_visual(self._rigid_visual)
+        )
+        rigid_form.addRow("Visual", self._rigid_visual["container"])
         self._rb_forces_widget = QtWidgets.QWidget(self)
         forces_layout = QtWidgets.QVBoxLayout(self._rb_forces_widget)
         forces_layout.setContentsMargins(0, 0, 0, 0)
@@ -195,9 +218,15 @@ class ObjectInspector(QtWidgets.QDialog):
         layout.addWidget(self._stack)
         layout.addLayout(button_row)
 
-    def set_target(self, defn: dict | None, obj: ObjectRef | None) -> None:
+    def set_target(
+        self,
+        defn: dict | None,
+        obj: ObjectRef | None,
+        scenario_path: Path | None = None,
+    ) -> None:
         self._defn = defn
         self._obj = obj
+        self._scenario_path = scenario_path
         self._sync_from_defn()
 
     def _sync_from_defn(self) -> None:
@@ -210,6 +239,9 @@ class ObjectInspector(QtWidgets.QDialog):
             _set_vector(self._pos, summary["x"], summary["y"], summary["z"])
             _set_vector(self._vel, summary["vx"], summary["vy"], summary["vz"])
             self._mass.setValue(summary["mass"])
+            _set_visual_controls(
+                self._particle_visual, particle_visual(self._defn, self._obj.index)
+            )
             self._stack.setCurrentWidget(self._particle_page)
             self._set_enabled(True)
             return
@@ -248,6 +280,9 @@ class ObjectInspector(QtWidgets.QDialog):
             inertia = summary["inertia_body"]
             inertia_diag = np.diag(inertia)
             _set_vector(self._rb_inertia, inertia_diag[0], inertia_diag[1], inertia_diag[2])
+            _set_visual_controls(
+                self._rigid_visual, rigid_body_visual(self._defn, self._obj.index)
+            )
             self._load_force_table(
                 rigid_body_force_points(self._defn, self._obj.index)
             )
@@ -295,6 +330,20 @@ class ObjectInspector(QtWidgets.QDialog):
             self._rb_forces_remove,
             self._rb_forces_enable_all,
             self._rb_forces_disable_all,
+            self._particle_visual["path"],
+            self._particle_visual["attach"],
+            self._particle_visual["clear"],
+            *self._particle_visual["scale"],
+            *self._particle_visual["offset"],
+            *self._particle_visual["rotation"],
+            *self._particle_visual["color"],
+            self._rigid_visual["path"],
+            self._rigid_visual["attach"],
+            self._rigid_visual["clear"],
+            *self._rigid_visual["scale"],
+            *self._rigid_visual["offset"],
+            *self._rigid_visual["rotation"],
+            *self._rigid_visual["color"],
         ]
         for row in self._rb_points_inertia:
             widgets.extend(row)
@@ -314,6 +363,13 @@ class ObjectInspector(QtWidgets.QDialog):
                     self._mass.value(),
                 ]
                 apply_particle_edit(self._defn, self._obj.index, values)
+                set_particle_visual(
+                    self._defn,
+                    self._obj.index,
+                    _visual_from_controls(
+                        self._particle_visual, self._scenario_path
+                    ),
+                )
             elif self._obj.type == "force":
                 if self._obj.subtype == "uniform_gravity":
                     g = self._vector_values(self._g)
@@ -349,6 +405,11 @@ class ObjectInspector(QtWidgets.QDialog):
                     self._vector_values(self._rb_vel),
                     self._quat_values(self._rb_quat),
                     self._vector_values(self._rb_omega),
+                )
+                set_rigid_body_visual(
+                    self._defn,
+                    self._obj.index,
+                    _visual_from_controls(self._rigid_visual, self._scenario_path),
                 )
                 forces = self._forces_from_table()
                 set_rigid_body_force_points(self._defn, self._obj.index, forces)
@@ -565,6 +626,27 @@ class ObjectInspector(QtWidgets.QDialog):
                 self._rb_forces_table.setItem(row, 0, item)
             item.setCheckState(QtCore.Qt.CheckState.Unchecked)
 
+    def _on_attach_visual(self, controls: dict[str, object]) -> None:
+        if not loader_available():
+            QtWidgets.QMessageBox.information(
+                self,
+                "Model Loader Missing",
+                "Mesh loading requires the optional 'trimesh' dependency.",
+            )
+            return
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Attach Model",
+            "",
+            "3D Models (*.glb *.gltf *.obj *.stl *.ply)",
+        )
+        if not path:
+            return
+        controls["path"].setText(path)
+
+    def _on_clear_visual(self, controls: dict[str, object]) -> None:
+        controls["path"].setText("")
+
     @staticmethod
     def _vector_values(fields: Sequence[QtWidgets.QDoubleSpinBox]) -> list[float]:
         return [field.value() for field in fields]
@@ -584,6 +666,19 @@ def _vector_fields(
         spin.setDecimals(6)
         spin.setSingleStep(0.1)
         spin.setReadOnly(read_only)
+        fields.append(spin)
+    return fields[0], fields[1], fields[2]
+
+
+def _color_fields() -> tuple[
+    QtWidgets.QDoubleSpinBox, QtWidgets.QDoubleSpinBox, QtWidgets.QDoubleSpinBox
+]:
+    fields = []
+    for _ in range(3):
+        spin = QtWidgets.QDoubleSpinBox()
+        spin.setRange(0.0, 1.0)
+        spin.setDecimals(3)
+        spin.setSingleStep(0.05)
         fields.append(spin)
     return fields[0], fields[1], fields[2]
 
@@ -669,3 +764,102 @@ def _form_row(label: str, widget: QtWidgets.QWidget) -> QtWidgets.QHBoxLayout:
     layout.addWidget(QtWidgets.QLabel(label))
     layout.addWidget(widget, 1)
     return layout
+
+
+def _build_visual_controls(parent: QtWidgets.QWidget) -> dict[str, object]:
+    container = QtWidgets.QWidget(parent)
+    layout = QtWidgets.QFormLayout(container)
+    path = QtWidgets.QLineEdit(parent)
+    path.setReadOnly(True)
+    attach = QtWidgets.QPushButton("Attach Model...", parent)
+    clear = QtWidgets.QPushButton("Clear", parent)
+    button_row = QtWidgets.QHBoxLayout()
+    button_row.addWidget(attach)
+    button_row.addWidget(clear)
+    button_row.addStretch(1)
+    scale = _vector_fields(min_value=1e-6)
+    offset = _vector_fields()
+    rotation = _quat_fields()
+    color = _color_fields()
+    _set_vector(scale, 1.0, 1.0, 1.0)
+    _set_vector(offset, 0.0, 0.0, 0.0)
+    _set_quat(rotation, 1.0, 0.0, 0.0, 0.0)
+    _set_vector(color, 1.0, 1.0, 1.0)
+    layout.addRow("Path", path)
+    layout.addRow("", _layout_widget(button_row))
+    layout.addRow("Scale", _vector_widget(scale))
+    layout.addRow("Offset", _vector_widget(offset))
+    layout.addRow("Rotation", _vector_widget(rotation))
+    layout.addRow("Color Tint", _vector_widget(color))
+    return {
+        "container": container,
+        "path": path,
+        "attach": attach,
+        "clear": clear,
+        "scale": scale,
+        "offset": offset,
+        "rotation": rotation,
+        "color": color,
+    }
+
+
+def _set_visual_controls(
+    controls: dict[str, object], visual: dict[str, object] | None
+) -> None:
+    if visual is None:
+        controls["path"].setText("")
+        _set_vector(controls["scale"], 1.0, 1.0, 1.0)
+        _set_vector(controls["offset"], 0.0, 0.0, 0.0)
+        _set_quat(controls["rotation"], 1.0, 0.0, 0.0, 0.0)
+        _set_vector(controls["color"], 1.0, 1.0, 1.0)
+        return
+    controls["path"].setText(str(visual.get("mesh_path", "")))
+    scale = visual.get("scale", [1.0, 1.0, 1.0])
+    offset = visual.get("offset_body", [0.0, 0.0, 0.0])
+    rotation = visual.get("rotation_body_quat", [1.0, 0.0, 0.0, 0.0])
+    color = visual.get("color_tint", [1.0, 1.0, 1.0])
+    _set_vector(controls["scale"], scale[0], scale[1], scale[2])
+    _set_vector(controls["offset"], offset[0], offset[1], offset[2])
+    _set_quat(controls["rotation"], rotation[0], rotation[1], rotation[2], rotation[3])
+    _set_vector(controls["color"], color[0], color[1], color[2])
+
+
+def _visual_from_controls(
+    controls: dict[str, object], scenario_path: Path | None
+) -> dict[str, object] | None:
+    path = controls["path"].text().strip()
+    if not path:
+        return None
+    mesh_path = _relativize_mesh_path(path, scenario_path)
+    scale = [field.value() for field in controls["scale"]]
+    offset = [field.value() for field in controls["offset"]]
+    rotation = [field.value() for field in controls["rotation"]]
+    color = [field.value() for field in controls["color"]]
+    q = np.asarray(rotation, dtype=np.float64)
+    q_norm = np.linalg.norm(q)
+    if q_norm > 0:
+        q = q / q_norm
+    rotation = [float(v) for v in q]
+    return {
+        "kind": "mesh",
+        "mesh_path": mesh_path,
+        "scale": scale,
+        "offset_body": offset,
+        "rotation_body_quat": rotation,
+        "color_tint": color,
+    }
+
+
+def _relativize_mesh_path(path: str, scenario_path: Path | None) -> str:
+    if scenario_path is None:
+        return path
+    try:
+        return str(Path(path).resolve().relative_to(scenario_path.parent.resolve()))
+    except ValueError:
+        return path
+
+
+def _layout_widget(layout: QtWidgets.QLayout) -> QtWidgets.QWidget:
+    widget = QtWidgets.QWidget()
+    widget.setLayout(layout)
+    return widget

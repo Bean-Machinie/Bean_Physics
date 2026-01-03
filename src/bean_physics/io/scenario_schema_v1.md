@@ -19,6 +19,8 @@ This schema defines a declarative JSON format for reproducible simulations.
     - `pos` (array[N][3])
     - `vel` (array[N][3])
     - `mass` (array[N])
+    - `visual` (array[N], optional):
+      - `null` or visual block (see below)
   - `rigid_bodies` (object, optional):
     - `pos` (array[M][3])
     - `vel` (array[M][3])
@@ -34,6 +36,21 @@ This schema defines a declarative JSON format for reproducible simulations.
       - `params` (`{"size":[sx,sy,sz]}` or `{"radius": r}`)
       - `points` (`[{mass, pos}]`, required when `kind = "points"`)
       - `mass` (float, should match `mass[i]`)
+    - `visual` (array[M], optional):
+      - `null` or visual block (see below)
+
+## Visual blocks
+
+Visual blocks are UI-only and do not affect physics.
+
+- `kind` (string): `"mesh"` or `"primitive"`
+- `mesh_path` (string, required for `"mesh"`)
+- `scale` (array[3], optional; default `[1,1,1]`)
+- `offset_body` (array[3], optional; default `[0,0,0]`)
+- `rotation_body_quat` (array[4], optional; default `[1,0,0,0]`)
+- `color_tint` (array[3], optional; default `[1,1,1]`, multiplies authored colors)
+
+Meshes are recentered to their geometric center for rendering.
 
 ## Models/forces
 

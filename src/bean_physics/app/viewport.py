@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 from vispy import app, scene
 from vispy.util import keys
 
 from ..core.math.quat import quat_to_rotmat
-from .viz_utils import compute_bounds, compute_selection_bounds, rigid_transform_matrix
+from .visual_assets import load_mesh_data
+from .viz_utils import (
+    compose_visual_transform,
+    compute_bounds,
+    compute_selection_bounds,
+    rigid_transform_matrix,
+)
 
 app.use_app("pyside6")
 
@@ -45,6 +51,8 @@ class SpacePanTurntableCamera(scene.TurntableCamera):
 
 
 class ViewportWidget(QtWidgets.QWidget):
+    visual_warning = QtCore.Signal(str)
+
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
 
@@ -63,6 +71,9 @@ class ViewportWidget(QtWidgets.QWidget):
         self._particles = scene.visuals.Markers(parent=self._view.scene)
         self._rigid_visuals: list[scene.visuals.Mesh] = []
         self._rigid_shapes: list[dict[str, object]] = []
+        self._particle_visuals: list[list[scene.visuals.Mesh]] = []
+        self._rigid_mesh_visuals: list[list[scene.visuals.Mesh]] = []
+        self._mesh_cache: dict[str, dict[str, object]] = {}
         self._rigid_points = scene.visuals.Markers(parent=self._view.scene)
         self._selected_particles = scene.visuals.Markers(parent=self._view.scene)
         self._selected_particles.set_gl_state("translucent", depth_test=False)
@@ -80,6 +91,7 @@ class ViewportWidget(QtWidgets.QWidget):
         self._selected_rigid_index: int | None = None
         self._last_particle_pos = np.zeros((0, 3), dtype=np.float32)
         self._last_rigid_pos = np.zeros((0, 3), dtype=np.float32)
+        self._last_rigid_quat = np.zeros((0, 4), dtype=np.float32)
         self._trail_enabled = False
         self._trail_length = 500
         self._trail_stride = 1
@@ -117,6 +129,38 @@ class ViewportWidget(QtWidgets.QWidget):
         self._update_labels()
         self._update_follow()
 
+    def set_particle_visuals(
+        self, visuals: list[dict[str, object] | None], pos: np.ndarray
+    ) -> None:
+        pos = np.asarray(pos, dtype=np.float32)
+        if pos.size == 0:
+            pos = np.zeros((0, 3), dtype=np.float32)
+        if not visuals and not self._particle_visuals:
+            return
+        self._ensure_visual_groups(visuals, self._particle_visuals)
+        for idx, group in enumerate(self._particle_visuals):
+            if idx >= len(visuals) or idx >= pos.shape[0] or visuals[idx] is None:
+                self._set_group_visible(group, False)
+                continue
+            spec = visuals[idx]
+            assert spec is not None
+            chunks = self._resolve_mesh_chunks(spec, group)
+            if chunks is None:
+                continue
+            rot_local = quat_to_rotmat(
+                np.asarray(spec["rotation_body_quat"], dtype=np.float32)
+            )
+            transform = compose_visual_transform(
+                pos[idx],
+                np.eye(3, dtype=np.float32),
+                np.asarray(spec["offset_body"], dtype=np.float32),
+                rot_local,
+                np.asarray(spec["scale"], dtype=np.float32),
+            )
+            for visual in group:
+                visual.visible = True
+                visual.transform.matrix = transform
+
     def set_rigid_bodies(
         self,
         pos: np.ndarray,
@@ -134,6 +178,7 @@ class ViewportWidget(QtWidgets.QWidget):
         if quat.ndim != 2 or quat.shape[1] != 4:
             raise ValueError("quat must have shape (M, 4)")
         self._last_rigid_pos = pos
+        self._last_rigid_quat = quat
         shapes = shapes or []
         if len(shapes) < pos.shape[0]:
             shapes = shapes + [{} for _ in range(pos.shape[0] - len(shapes))]
@@ -149,6 +194,41 @@ class ViewportWidget(QtWidgets.QWidget):
             visual.transform.matrix = transform
         self._update_rigid_visual_styles()
         self._update_follow()
+
+    def set_rigid_body_visuals(
+        self,
+        visuals: list[dict[str, object] | None],
+        pos: np.ndarray,
+        quat: np.ndarray,
+    ) -> None:
+        pos = np.asarray(pos, dtype=np.float32)
+        quat = np.asarray(quat, dtype=np.float32)
+        if not visuals and not self._rigid_mesh_visuals:
+            return
+        self._ensure_visual_groups(visuals, self._rigid_mesh_visuals)
+        for idx, group in enumerate(self._rigid_mesh_visuals):
+            if idx >= len(visuals) or idx >= pos.shape[0] or visuals[idx] is None:
+                self._set_group_visible(group, False)
+                continue
+            spec = visuals[idx]
+            assert spec is not None
+            chunks = self._resolve_mesh_chunks(spec, group)
+            if chunks is None:
+                continue
+            rot_world = quat_to_rotmat(quat[idx])
+            rot_local = quat_to_rotmat(
+                np.asarray(spec["rotation_body_quat"], dtype=np.float32)
+            )
+            transform = compose_visual_transform(
+                pos[idx],
+                rot_world,
+                np.asarray(spec["offset_body"], dtype=np.float32),
+                rot_local,
+                np.asarray(spec["scale"], dtype=np.float32),
+            )
+            for visual in group:
+                visual.visible = True
+                visual.transform.matrix = transform
 
     def set_rigid_body_points(self, points_world: np.ndarray) -> None:
         points = np.asarray(points_world, dtype=np.float32)
@@ -359,6 +439,112 @@ class ViewportWidget(QtWidgets.QWidget):
             else:
                 visual.color = (1.0, 0.5, 0.2, 0.85)
 
+    def _ensure_visual_groups(
+        self,
+        visuals: list[dict[str, object] | None],
+        targets: list[list[scene.visuals.Mesh]],
+    ) -> None:
+        if not visuals and not targets:
+            return
+        while len(targets) < len(visuals):
+            targets.append([])
+        while len(targets) > len(visuals):
+            group = targets.pop()
+            for visual in group:
+                visual.parent = None
+
+    def _resolve_mesh_chunks(
+        self, spec: dict[str, object], group: list[scene.visuals.Mesh]
+    ) -> list[dict[str, object]] | None:
+        mesh_data = self._get_mesh_data(spec)
+        if mesh_data is None:
+            fallback = spec.get("fallback")
+            if fallback == "sphere":
+                self._ensure_mesh_group(group, 1)
+                radius = float(spec.get("fallback_radius", 0.5))
+                vertices, faces = _sphere_mesh(radius, 12, 24)
+                group[0].set_data(
+                    vertices=vertices,
+                    faces=faces,
+                    color=(*spec.get("color_tint", [1.0, 1.0, 1.0]), 1.0),
+                )
+                group[0].set_gl_state("opaque", depth_test=True, blend=False)
+                group[0].shading = None
+                self._set_group_visible(group, True)
+                return []
+            self._set_group_visible(group, False)
+            return None
+        chunks = mesh_data.get("chunks", [])
+        self._ensure_mesh_group(group, len(chunks))
+        for idx, chunk in enumerate(chunks):
+            vertex_colors = chunk.get("vertex_colors")
+            if vertex_colors is not None:
+                self._warn_if_constant(vertex_colors, spec.get("mesh_path", ""))
+            else:
+                self.visual_warning.emit(
+                    "vertex_colors missing — rendering will look grey"
+                )
+            group[idx].set_data(
+                vertices=chunk["vertices"],
+                faces=chunk["faces"],
+                color=None if vertex_colors is not None else (*spec.get("color_tint", [1.0, 1.0, 1.0]), 1.0),
+                vertex_colors=vertex_colors,
+            )
+            group[idx].set_gl_state("opaque", depth_test=True, blend=False)
+            group[idx].shading = None
+        self._set_group_visible(group, True)
+        return chunks
+
+    def _ensure_mesh_group(
+        self, group: list[scene.visuals.Mesh], count: int
+    ) -> None:
+        while len(group) < count:
+            vertices, faces = _sphere_mesh(0.01, 4, 8)
+            visual = scene.visuals.Mesh(
+                vertices=vertices,
+                faces=faces,
+                color=(0.7, 0.7, 0.7, 1.0),
+                shading=None,
+                parent=self._view.scene,
+            )
+            visual.set_gl_state("opaque", depth_test=True, blend=False)
+            visual.transform = scene.transforms.MatrixTransform()
+            group.append(visual)
+        while len(group) > count:
+            visual = group.pop()
+            visual.parent = None
+
+    def _set_group_visible(self, group: list[scene.visuals.Mesh], visible: bool) -> None:
+        for visual in group:
+            visual.visible = visible
+
+    def _warn_if_constant(self, colors: np.ndarray, path: object) -> None:
+        if _is_constant_color(colors):
+            self.visual_warning.emit(
+                f"vertex_colors constant for {path} — rendering may look grey"
+            )
+
+    def _get_mesh_data(self, spec: dict[str, object]) -> dict[str, object] | None:
+        path = spec.get("mesh_path")
+        if not path:
+            return None
+        if path in self._mesh_cache:
+            cached = self._mesh_cache[path]
+            if cached.get("missing"):
+                return None
+            return cached
+        try:
+            data = load_mesh_data(path)
+        except Exception as exc:
+            self.visual_warning.emit(f"Mesh load failed: {path} ({exc})")
+            self._mesh_cache[path] = {"missing": True}
+            return None
+        mesh_data = {
+            "chunks": data.get("chunks", []),
+        }
+        self._mesh_cache[path] = mesh_data
+        return mesh_data
+
 
 def _shape_keys(shapes: list[dict[str, object]]) -> list[tuple[str, tuple[float, ...]]]:
     keys_list: list[tuple[str, tuple[float, ...]]] = []
@@ -371,6 +557,12 @@ def _shape_keys(shapes: list[dict[str, object]]) -> list[tuple[str, tuple[float,
             radius = float(shape.get("radius", 0.5))
             keys_list.append(("sphere", (radius,)))
     return keys_list
+
+
+def _is_constant_color(colors: np.ndarray, tol: float = 1e-5) -> bool:
+    if colors.size == 0:
+        return True
+    return np.all(np.abs(colors - colors[0]) < tol)
 
 
 def _box_mesh(size: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

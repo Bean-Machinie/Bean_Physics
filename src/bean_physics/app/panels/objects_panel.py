@@ -10,7 +10,9 @@ from .objects_utils import (
     ObjectRef,
     force_summary,
     particle_summary,
+    particle_visual,
     rigid_body_summary,
+    rigid_body_visual,
 )
 
 
@@ -58,6 +60,8 @@ class ObjectsPanel(QtWidgets.QWidget):
         for obj in particles:
             summary = particle_summary(defn, obj.index)
             title = f"Particle {obj.index + 1}"
+            if particle_visual(defn, obj.index) is not None:
+                title += " (model)"
             detail = (
                 f"mass {summary['mass']:.3g}  "
                 f"pos ({summary['x']:.3g}, {summary['y']:.3g}, {summary['z']:.3g})"
@@ -76,6 +80,8 @@ class ObjectsPanel(QtWidgets.QWidget):
             elif source and source.get("kind") == "points":
                 kind = "Points"
             title = f"{kind} {obj.index + 1}"
+            if rigid_body_visual(defn, obj.index) is not None:
+                title += " (model)"
             detail = (
                 f"mass {summary['mass']:.3g}  "
                 f"pos ({summary['x']:.3g}, {summary['y']:.3g}, {summary['z']:.3g})"

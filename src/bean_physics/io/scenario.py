@@ -160,6 +160,8 @@ def _validate_scenario_v1(data: dict[str, Any]) -> ScenarioDefinition:
         _validate_array(p["vel"], (3,), "particles.vel")
         if len(p["mass"]) != len(p["pos"]):
             raise ValueError("particles.mass must have length N")
+        if "visual" in p:
+            _validate_visual_list(p["visual"], len(p["mass"]), "particles.visual")
 
     if "rigid_bodies" in entities:
         r = entities["rigid_bodies"]
@@ -171,6 +173,8 @@ def _validate_scenario_v1(data: dict[str, Any]) -> ScenarioDefinition:
         _validate_array(r["quat"], (4,), "rigid_bodies.quat")
         if len(r["mass"]) != len(r["pos"]):
             raise ValueError("rigid_bodies.mass must have length M")
+        if "visual" in r:
+            _validate_visual_list(r["visual"], len(r["mass"]), "rigid_bodies.visual")
 
         md = r["mass_distribution"]
         _require(md, "points_body", "rigid_bodies.mass_distribution")
@@ -269,6 +273,34 @@ def _validate_scenario_v1(data: dict[str, Any]) -> ScenarioDefinition:
             raise ValueError(f"unknown model type: {key}")
 
     return data
+
+
+def _validate_visual_list(values: Any, expected_len: int, ctx: str) -> None:
+    if not isinstance(values, list) or len(values) != expected_len:
+        raise ValueError(f"{ctx} must be a list of length {expected_len}")
+    for idx, entry in enumerate(values):
+        if entry is None:
+            continue
+        if not isinstance(entry, dict):
+            raise ValueError(f"{ctx}[{idx}] must be an object")
+        _validate_visual_block(entry, f"{ctx}[{idx}]")
+
+
+def _validate_visual_block(entry: dict[str, Any], ctx: str) -> None:
+    kind = entry.get("kind")
+    if kind not in {"mesh", "primitive"}:
+        raise ValueError(f"{ctx}.kind must be 'mesh' or 'primitive'")
+    if kind == "mesh":
+        if "mesh_path" not in entry:
+            raise ValueError(f"{ctx}.mesh_path is required for mesh visuals")
+    if "scale" in entry and len(entry["scale"]) != 3:
+        raise ValueError(f"{ctx}.scale must have length 3")
+    if "offset_body" in entry and len(entry["offset_body"]) != 3:
+        raise ValueError(f"{ctx}.offset_body must have length 3")
+    if "rotation_body_quat" in entry and len(entry["rotation_body_quat"]) != 4:
+        raise ValueError(f"{ctx}.rotation_body_quat must have length 4")
+    if "color_tint" in entry and len(entry["color_tint"]) != 3:
+        raise ValueError(f"{ctx}.color_tint must have length 3")
 
 
 def _resolve_force_body(

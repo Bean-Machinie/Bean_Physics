@@ -169,6 +169,50 @@ def rigid_body_points_body(defn: ScenarioDefinition | None, index: int) -> np.nd
     return np.zeros((0, 3), dtype=np.float64)
 
 
+def particle_visual(defn: ScenarioDefinition, index: int) -> dict[str, object] | None:
+    particles = defn.get("entities", {}).get("particles")
+    if not particles:
+        return None
+    visuals = particles.get("visual")
+    if not isinstance(visuals, list) or index >= len(visuals):
+        return None
+    return visuals[index]
+
+
+def set_particle_visual(
+    defn: ScenarioDefinition, index: int, visual: dict[str, object] | None
+) -> None:
+    particles = defn.get("entities", {}).get("particles")
+    if not particles:
+        raise ValueError("no particles in scenario")
+    visuals = particles.setdefault("visual", [None] * len(particles.get("mass", [])))
+    while len(visuals) < len(particles.get("mass", [])):
+        visuals.append(None)
+    visuals[index] = visual
+
+
+def rigid_body_visual(defn: ScenarioDefinition, index: int) -> dict[str, object] | None:
+    rigid = defn.get("entities", {}).get("rigid_bodies")
+    if not rigid:
+        return None
+    visuals = rigid.get("visual")
+    if not isinstance(visuals, list) or index >= len(visuals):
+        return None
+    return visuals[index]
+
+
+def set_rigid_body_visual(
+    defn: ScenarioDefinition, index: int, visual: dict[str, object] | None
+) -> None:
+    rigid = defn.get("entities", {}).get("rigid_bodies")
+    if not rigid:
+        raise ValueError("no rigid bodies in scenario")
+    visuals = rigid.setdefault("visual", [None] * len(rigid.get("mass", [])))
+    while len(visuals) < len(rigid.get("mass", [])):
+        visuals.append(None)
+    visuals[index] = visual
+
+
 def rigid_body_force_points(
     defn: ScenarioDefinition, body_index: int
 ) -> list[dict[str, object]]:
@@ -209,6 +253,9 @@ def add_particle(defn: ScenarioDefinition) -> int:
     particles["pos"].append([0.0, 0.0, 0.0])
     particles["vel"].append([0.0, 0.0, 0.0])
     particles["mass"].append(1.0)
+    if "visual" in particles:
+        visuals = particles.setdefault("visual", [])
+        visuals.append(None)
     return len(particles["mass"]) - 1
 
 
@@ -287,6 +334,8 @@ def add_rigid_body_template(
     rigid["quat"].append([1.0, 0.0, 0.0, 0.0])
     rigid["omega_body"].append([0.0, 0.0, 0.0])
     rigid["mass"].append(1.0 if kind != "points" else float(total_mass))
+    visuals = rigid.setdefault("visual", [])
+    visuals.append(None)
 
     sources = rigid.setdefault("source", [])
     if kind == "points":
@@ -325,6 +374,9 @@ def remove_particle(defn: ScenarioDefinition, index: int) -> None:
         if index < 0 or index >= len(items):
             raise IndexError("particle index out of range")
         del items[index]
+    visuals = particles.get("visual")
+    if isinstance(visuals, list) and len(visuals) > index:
+        del visuals[index]
     if not particles["mass"]:
         entities = defn.get("entities", {})
         entities.pop("particles", None)
@@ -349,6 +401,9 @@ def remove_rigid_body(defn: ScenarioDefinition, index: int) -> None:
     sources = rigid.get("source")
     if isinstance(sources, list) and len(sources) > index:
         del sources[index]
+    visuals = rigid.get("visual")
+    if isinstance(visuals, list) and len(visuals) > index:
+        del visuals[index]
     inertia_list = _rigid_inertia_list(rigid)
     if inertia_list:
         del inertia_list[index]

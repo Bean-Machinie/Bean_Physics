@@ -27,9 +27,11 @@ from .panels.objects_utils import (
     list_forces,
     list_particles,
     list_rigid_bodies,
+    particle_visual,
     remove_force,
     remove_particle,
     remove_rigid_body,
+    rigid_body_visual,
     rigid_body_shapes,
     rigid_body_points_body,
 )
@@ -52,6 +54,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._timer.timeout.connect(self._on_tick)
 
         self._viewport = ViewportWidget(self)
+        self._viewport.visual_warning.connect(self.statusBar().showMessage)
         self.setCentralWidget(self._viewport)
 
         self._objects_panel = ObjectsPanel(self)
@@ -242,7 +245,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_state_to_viewport()
         self._refresh_objects_panel()
         if self._inspector.isVisible():
-            self._inspector.set_target(self._session.scenario_def, None)
+            self._inspector.set_target(
+                self._session.scenario_def, None, self._session.scenario_path
+            )
         self._update_action_state()
         self._update_status()
         self._update_window_title()
@@ -272,7 +277,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_state_to_viewport()
         self._refresh_objects_panel()
         if self._inspector.isVisible():
-            self._inspector.set_target(self._session.scenario_def, None)
+            self._inspector.set_target(
+                self._session.scenario_def, None, self._session.scenario_path
+            )
         self._update_action_state()
         self._update_status()
         self._update_window_title()
@@ -354,12 +361,78 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_state_to_viewport(self) -> None:
         self._viewport.set_particles(self._controller.particle_positions())
+        self._viewport.set_particle_visuals(
+            self._particle_visual_specs(),
+            self._controller.particle_positions(),
+        )
         self._viewport.set_rigid_bodies(
             self._controller.rigid_body_positions(),
             self._controller.rigid_body_quat(),
             rigid_body_shapes(self._session.scenario_def),
         )
+        self._viewport.set_rigid_body_visuals(
+            self._rigid_body_visual_specs(),
+            self._controller.rigid_body_positions(),
+            self._controller.rigid_body_quat(),
+        )
         self._update_rigid_body_points()
+
+    def _particle_visual_specs(self) -> list[dict[str, object] | None]:
+        if self._session.scenario_def is None:
+            return []
+        particles = list_particles(self._session.scenario_def)
+        visuals: list[dict[str, object] | None] = []
+        for obj in particles:
+            visual = particle_visual(self._session.scenario_def, obj.index)
+            visuals.append(self._resolve_visual_spec(visual))
+        return visuals
+
+    def _rigid_body_visual_specs(self) -> list[dict[str, object] | None]:
+        if self._session.scenario_def is None:
+            return []
+        rigid_bodies = list_rigid_bodies(self._session.scenario_def)
+        visuals: list[dict[str, object] | None] = []
+        for obj in rigid_bodies:
+            visual = rigid_body_visual(self._session.scenario_def, obj.index)
+            visuals.append(self._resolve_visual_spec(visual))
+        return visuals
+
+    def _resolve_visual_spec(
+        self, visual: dict[str, object] | None
+    ) -> dict[str, object] | None:
+        if visual is None:
+            return None
+        if visual.get("kind") != "mesh":
+            return None
+        mesh_path = visual.get("mesh_path")
+        if not isinstance(mesh_path, str) or not mesh_path:
+            return None
+        resolved = Path(mesh_path)
+        if not resolved.is_absolute() and self._session.scenario_path is not None:
+            resolved = self._session.scenario_path.parent / resolved
+        if not resolved.exists():
+            self.statusBar().showMessage(f"Mesh not found: {resolved}")
+            return {
+                "scale": visual.get("scale", [1.0, 1.0, 1.0]),
+                "offset_body": visual.get("offset_body", [0.0, 0.0, 0.0]),
+                "rotation_body_quat": visual.get(
+                    "rotation_body_quat", [1.0, 0.0, 0.0, 0.0]
+                ),
+                "color_tint": visual.get("color_tint", [1.0, 1.0, 1.0]),
+                "fallback": "sphere",
+                "fallback_radius": 0.5,
+            }
+        return {
+            "mesh_path": str(resolved),
+            "scale": visual.get("scale", [1.0, 1.0, 1.0]),
+            "offset_body": visual.get("offset_body", [0.0, 0.0, 0.0]),
+            "rotation_body_quat": visual.get(
+                "rotation_body_quat", [1.0, 0.0, 0.0, 0.0]
+            ),
+            "color_tint": visual.get("color_tint", [1.0, 1.0, 1.0]),
+            "fallback": "sphere",
+            "fallback_radius": 0.5,
+        }
 
     def _update_action_state(self) -> None:
         loaded = self._controller.runtime is not None
@@ -411,7 +484,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._viewport.set_selected_particles([])
             self._viewport.set_selected_rigid_body(None)
             if self._inspector.isVisible():
-                self._inspector.set_target(self._session.scenario_def, None)
+                self._inspector.set_target(
+                    self._session.scenario_def, None, self._session.scenario_path
+                )
             return
         particles = list_particles(self._session.scenario_def)
         rigid_bodies = list_rigid_bodies(self._session.scenario_def)
@@ -437,7 +512,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._viewport.set_selected_particles([])
             self._viewport.set_selected_rigid_body(None)
             self._viewport.set_rigid_body_points(np.zeros((0, 3), dtype=np.float32))
-            self._inspector.set_target(self._session.scenario_def, None)
+            self._inspector.set_target(
+                self._session.scenario_def, None, self._session.scenario_path
+            )
             return
         if obj.type == "particle":
             self._viewport.set_selected_particles([obj.index])
@@ -450,12 +527,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self._viewport.set_selected_rigid_body(None)
         self._update_rigid_body_points()
         if self._inspector.isVisible():
-            self._inspector.set_target(self._session.scenario_def, obj)
+            self._inspector.set_target(
+                self._session.scenario_def, obj, self._session.scenario_path
+            )
 
     def _on_object_activated(self, obj: ObjectRef | None) -> None:
         if obj is None:
             return
-        self._inspector.set_target(self._session.scenario_def, obj)
+        self._inspector.set_target(
+            self._session.scenario_def, obj, self._session.scenario_path
+        )
         self._inspector.show()
         self._inspector.raise_()
         self._inspector.activateWindow()
@@ -491,7 +572,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._refresh_objects_panel()
             obj = ObjectRef(type="particle", index=index)
             self._objects_panel.select_object(obj)
-            self._inspector.set_target(self._session.scenario_def, obj)
+            self._inspector.set_target(
+                self._session.scenario_def, obj, self._session.scenario_path
+            )
             self._update_action_state()
             self._update_status()
             self._update_window_title()
@@ -516,7 +599,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._refresh_objects_panel()
             obj = ObjectRef(type="rigid_body", index=index, subtype=subtype)
             self._objects_panel.select_object(obj)
-            self._inspector.set_target(self._session.scenario_def, obj)
+            self._inspector.set_target(
+                self._session.scenario_def, obj, self._session.scenario_path
+            )
             self._update_action_state()
             self._update_status()
             self._update_window_title()
@@ -543,7 +628,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_state_to_viewport()
         self._refresh_objects_panel()
         if self._inspector.isVisible():
-            self._inspector.set_target(self._session.scenario_def, None)
+            self._inspector.set_target(
+                self._session.scenario_def, None, self._session.scenario_path
+            )
         self._update_action_state()
         self._update_status()
         self._update_window_title()
@@ -570,7 +657,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_state_to_viewport()
         self._refresh_objects_panel()
         self._objects_panel.select_object(obj)
-        self._inspector.set_target(self._session.scenario_def, obj)
+        self._inspector.set_target(
+            self._session.scenario_def, obj, self._session.scenario_path
+        )
         self._update_action_state()
         self._update_status()
         self._update_window_title()
