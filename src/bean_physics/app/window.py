@@ -12,6 +12,7 @@ from pathlib import Path
 from queue import Queue
 from threading import Thread
 
+import numpy as np
 
 from .viewport import ViewportWidget
 from .sim_controller import SimulationController
@@ -21,11 +22,15 @@ from .panels.objects_utils import (
     ObjectRef,
     add_nbody_gravity,
     add_particle,
+    add_rigid_body_template,
     add_uniform_gravity,
     list_forces,
     list_particles,
+    list_rigid_bodies,
     remove_force,
     remove_particle,
+    remove_rigid_body,
+    rigid_body_shapes,
 )
 from .inspector import ObjectInspector
 from .recording_utils import build_metadata, make_recording_paths, video_filename
@@ -350,6 +355,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._viewport.set_rigid_bodies(
             self._controller.rigid_body_positions(),
             self._controller.rigid_body_quat(),
+            rigid_body_shapes(self._session.scenario_def),
         )
 
     def _update_action_state(self) -> None:
@@ -397,18 +403,25 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _refresh_objects_panel(self) -> None:
         if self._session.scenario_def is None:
-            self._objects_panel.set_items({}, [], [])
+            self._objects_panel.set_items({}, [], [], [])
             self._objects_panel.select_object(None)
             self._viewport.set_selected_particles([])
+            self._viewport.set_selected_rigid_body(None)
             if self._inspector.isVisible():
                 self._inspector.set_target(self._session.scenario_def, None)
             return
         particles = list_particles(self._session.scenario_def)
+        rigid_bodies = list_rigid_bodies(self._session.scenario_def)
         forces = list_forces(self._session.scenario_def)
-        self._objects_panel.set_items(self._session.scenario_def, particles, forces)
+        self._objects_panel.set_items(
+            self._session.scenario_def, particles, rigid_bodies, forces
+        )
         if particles:
             self._objects_panel.select_object(particles[0])
             self._on_object_selected(particles[0])
+        elif rigid_bodies:
+            self._objects_panel.select_object(rigid_bodies[0])
+            self._on_object_selected(rigid_bodies[0])
         elif forces:
             self._objects_panel.select_object(forces[0])
             self._on_object_selected(forces[0])
@@ -419,12 +432,18 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_object_selected(self, obj: ObjectRef | None) -> None:
         if obj is None:
             self._viewport.set_selected_particles([])
+            self._viewport.set_selected_rigid_body(None)
             self._inspector.set_target(self._session.scenario_def, None)
             return
         if obj.type == "particle":
             self._viewport.set_selected_particles([obj.index])
+            self._viewport.set_selected_rigid_body(None)
+        elif obj.type == "rigid_body":
+            self._viewport.set_selected_particles([])
+            self._viewport.set_selected_rigid_body(obj.index)
         else:
             self._viewport.set_selected_particles([])
+            self._viewport.set_selected_rigid_body(None)
         if self._inspector.isVisible():
             self._inspector.set_target(self._session.scenario_def, obj)
 
@@ -482,12 +501,20 @@ class MainWindow(QtWidgets.QMainWindow):
             obj = ObjectRef(type="force", index=index, subtype="nbody_gravity")
             self._after_force_change(obj)
             return
-        if obj_type == "rigid_body":
-            QtWidgets.QMessageBox.information(
-                self,
-                "Not Implemented",
-                "Rigid body templates are not implemented yet.",
-            )
+        if obj_type == "rigid_body" and subtype in {"box", "sphere"}:
+            index = add_rigid_body_template(self._session.scenario_def, subtype)
+            self._session.mark_dirty()
+            self._controller.load_definition(self._session.scenario_def)
+            self._controller.scenario_path = self._session.scenario_path
+            self._running = False
+            self._apply_state_to_viewport()
+            self._refresh_objects_panel()
+            obj = ObjectRef(type="rigid_body", index=index, subtype=subtype)
+            self._objects_panel.select_object(obj)
+            self._inspector.set_target(self._session.scenario_def, obj)
+            self._update_action_state()
+            self._update_status()
+            self._update_window_title()
 
     def _on_remove_selected(self, obj: ObjectRef | None) -> None:
         if obj is None or self._session.scenario_def is None:
@@ -497,6 +524,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 remove_particle(self._session.scenario_def, obj.index)
             elif obj.type == "force":
                 remove_force(self._session.scenario_def, obj.index)
+            elif obj.type == "rigid_body":
+                remove_rigid_body(self._session.scenario_def, obj.index)
             else:
                 return
         except Exception as exc:  # pragma: no cover - Qt error path
@@ -542,15 +571,25 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_window_title()
 
     def _on_frame_all(self) -> None:
-        pos = self._controller.particle_positions()
+        particles = self._controller.particle_positions()
+        rigids = self._controller.rigid_body_positions()
+        pos = (
+            particles
+            if rigids.size == 0
+            else np.vstack([particles, rigids])
+        )
         self._viewport.frame_all(pos)
 
     def _on_frame_selection(self) -> None:
         obj = self._objects_panel.selected_object()
-        if obj is None or obj.type != "particle":
+        if obj is None:
             return
-        pos = self._controller.particle_positions()
-        self._viewport.frame_selection(pos, [obj.index])
+        if obj.type == "particle":
+            pos = self._controller.particle_positions()
+            self._viewport.frame_selection(pos, [obj.index])
+        elif obj.type == "rigid_body":
+            pos = self._controller.rigid_body_positions()
+            self._viewport.frame_selection(pos, [obj.index])
 
     def _on_follow_toggled(self, enabled: bool) -> None:
         self._viewport.set_follow_selection(enabled)

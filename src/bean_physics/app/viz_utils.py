@@ -26,3 +26,16 @@ def compute_selection_bounds(
         return np.zeros(3, dtype=np.float32), 0.0
     subset = points[valid]
     return compute_bounds(subset)
+
+
+def rigid_transform_matrix(rot: np.ndarray, pos: np.ndarray) -> np.ndarray:
+    r = np.asarray(rot, dtype=np.float32)
+    t = np.asarray(pos, dtype=np.float32)
+    if r.shape != (3, 3):
+        raise ValueError("rot must have shape (3, 3)")
+    if t.shape != (3,):
+        raise ValueError("pos must have shape (3,)")
+    mat = np.eye(4, dtype=np.float32)
+    mat[:3, :3] = r
+    mat[3, :3] = t
+    return mat

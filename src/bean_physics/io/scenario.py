@@ -10,7 +10,11 @@ import numpy as np
 
 from ..core.forces import CompositeModel, NBodyGravity, RigidBodyForces, UniformGravity
 from ..core.integrators import SymplecticEuler, VelocityVerlet
-from ..core.rigid_body.mass_properties import mass_properties
+from ..core.rigid_body.mass_properties import (
+    box_inertia_body,
+    mass_properties,
+    sphere_inertia_body,
+)
 from ..core.state import ParticlesState, RigidBodiesState, SystemState
 
 
@@ -56,26 +60,16 @@ def scenario_to_runtime(
             )
         if "rigid_bodies" in entities:
             r = entities["rigid_bodies"]
+            mass = np.asarray(r["mass"], dtype=np.float64)
+            inertia_body = _rigid_body_inertia(r, mass)
             state.rigid_bodies = RigidBodiesState(
                 pos=np.asarray(r["pos"], dtype=np.float64),
                 vel=np.asarray(r["vel"], dtype=np.float64),
                 quat=np.asarray(r["quat"], dtype=np.float64),
                 omega=np.asarray(r["omega_body"], dtype=np.float64),
-                mass=np.asarray(r["mass"], dtype=np.float64),
+                mass=mass,
+                inertia_body=inertia_body,
             )
-
-            mass_dist = r["mass_distribution"]
-            points_body = np.asarray(mass_dist["points_body"], dtype=np.float64)
-            point_masses = np.asarray(mass_dist["point_masses"], dtype=np.float64)
-
-            if "inertia_body" in mass_dist and mass_dist["inertia_body"] is not None:
-                inertia_body = np.asarray(mass_dist["inertia_body"], dtype=np.float64)
-            else:
-                total_mass, _, inertia = mass_properties(points_body, point_masses)
-                inertia_body = inertia
-                mass_sum = float(np.sum(state.rigid_bodies.mass))
-                if not np.isclose(mass_sum / state.rigid_bodies.mass.shape[0], total_mass):
-                    raise ValueError("rigid_bodies mass does not match mass_distribution")
 
     models = []
     for entry in defn.get("models", []):
@@ -180,6 +174,33 @@ def _validate_scenario_v1(data: dict[str, Any]) -> ScenarioDefinition:
             I = np.asarray(md["inertia_body"], dtype=np.float64)
             if I.ndim not in (2, 3) or I.shape[-2:] != (3, 3):
                 raise ValueError("rigid_bodies.mass_distribution.inertia_body must be (3,3) or (M,3,3)")
+            if I.ndim == 3 and I.shape[0] != len(r["pos"]):
+                raise ValueError("rigid_bodies.mass_distribution.inertia_body must have length M")
+
+        if "source" in r:
+            sources = r["source"]
+            if not isinstance(sources, list) or len(sources) != len(r["pos"]):
+                raise ValueError("rigid_bodies.source must be a list of length M")
+            for idx, src in enumerate(sources):
+                if not isinstance(src, dict):
+                    raise ValueError("rigid_bodies.source entries must be objects")
+                kind = _require(src, "kind", f"rigid_bodies.source[{idx}]")
+                params = _require(src, "params", f"rigid_bodies.source[{idx}]")
+                mass = _require(src, "mass", f"rigid_bodies.source[{idx}]")
+                if kind not in {"box", "sphere"}:
+                    raise ValueError("rigid_bodies.source.kind must be 'box' or 'sphere'")
+                if kind == "box":
+                    size = params.get("size")
+                    if size is None or len(size) != 3:
+                        raise ValueError("rigid_bodies.source.params.size must have length 3")
+                if kind == "sphere":
+                    radius = params.get("radius")
+                    if radius is None:
+                        raise ValueError("rigid_bodies.source.params.radius is required")
+                if float(mass) <= 0.0:
+                    raise ValueError("rigid_bodies.source.mass must be > 0")
+                if not np.isclose(float(mass), float(r["mass"][idx])):
+                    raise ValueError("rigid_bodies.source.mass must match rigid_bodies.mass")
 
     for entry in data.get("models", []):
         if not isinstance(entry, dict) or len(entry) != 1:
@@ -203,3 +224,43 @@ def _validate_scenario_v1(data: dict[str, Any]) -> ScenarioDefinition:
             raise ValueError(f"unknown model type: {key}")
 
     return data
+
+
+def _rigid_body_inertia(rigid: dict[str, Any], mass: np.ndarray) -> np.ndarray:
+    if mass.shape[0] == 0:
+        return np.zeros((0, 3, 3), dtype=np.float64)
+    mass_dist = rigid["mass_distribution"]
+    inertia = mass_dist.get("inertia_body")
+    if inertia is not None:
+        inertia_arr = np.asarray(inertia, dtype=np.float64)
+        if inertia_arr.ndim == 2:
+            return np.broadcast_to(inertia_arr, (mass.shape[0], 3, 3)).copy()
+        if inertia_arr.ndim == 3:
+            return inertia_arr
+        raise ValueError("inertia_body must be (3,3) or (M,3,3)")
+
+    sources = rigid.get("source")
+    if sources is not None:
+        inertia_list = []
+        for idx, src in enumerate(sources):
+            kind = src.get("kind")
+            params = src.get("params", {})
+            if kind == "box":
+                inertia_list.append(
+                    box_inertia_body(mass[idx], np.asarray(params.get("size"), dtype=np.float64))
+                )
+            elif kind == "sphere":
+                inertia_list.append(
+                    sphere_inertia_body(mass[idx], float(params.get("radius")))
+                )
+            else:
+                raise ValueError("unsupported rigid body source kind")
+        return np.stack(inertia_list, axis=0)
+
+    points_body = np.asarray(mass_dist["points_body"], dtype=np.float64)
+    point_masses = np.asarray(mass_dist["point_masses"], dtype=np.float64)
+    total_mass, _, inertia = mass_properties(points_body, point_masses)
+    mass_sum = float(np.sum(mass))
+    if mass.shape[0] > 0 and not np.isclose(mass_sum / mass.shape[0], total_mass):
+        raise ValueError("rigid_bodies mass does not match mass_distribution")
+    return np.broadcast_to(inertia, (mass.shape[0], 3, 3)).copy()

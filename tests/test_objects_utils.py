@@ -8,15 +8,20 @@ import pytest
 from bean_physics.app.panels.objects_utils import (
     add_nbody_gravity,
     add_particle,
+    add_rigid_body_template,
     add_uniform_gravity,
     apply_nbody_gravity,
     apply_particle_edit,
+    apply_rigid_body_edit,
     apply_uniform_gravity,
     list_forces,
     list_particles,
+    list_rigid_bodies,
     particle_summary,
+    rigid_body_summary,
     remove_force,
     remove_particle,
+    remove_rigid_body,
 )
 from bean_physics.app.session import ScenarioSession
 from bean_physics.io.scenario import load_scenario, save_scenario, scenario_to_runtime
@@ -110,3 +115,28 @@ def test_uniform_gravity_changes_velocity() -> None:
     for _ in range(5):
         integrator.step(state, model, dt)
     assert state.particles.vel[0, 1] < v0
+
+
+def test_add_remove_rigid_body_template() -> None:
+    session = ScenarioSession()
+    defn = session.new_default()
+    idx = add_rigid_body_template(defn, "box", {"size": [1.0, 2.0, 3.0]})
+    bodies = list_rigid_bodies(defn)
+    assert bodies[0].index == idx
+    summary = rigid_body_summary(defn, idx)
+    assert summary["mass"] == 1.0
+    apply_rigid_body_edit(
+        defn,
+        idx,
+        "sphere",
+        {"radius": 2.0},
+        3.0,
+        [0.0, 1.0, 2.0],
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0],
+        [0.1, 0.2, 0.3],
+    )
+    summary = rigid_body_summary(defn, idx)
+    assert summary["mass"] == 3.0
+    remove_rigid_body(defn, idx)
+    assert list_rigid_bodies(defn) == []

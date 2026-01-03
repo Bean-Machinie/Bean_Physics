@@ -22,7 +22,12 @@ if __name__ == "__main__":
     quat = np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float64)
     omega_body = np.array([[0.3, 0.4, 0.5]], dtype=np.float64)
     rb = RigidBodiesState(
-        pos=pos, vel=vel, quat=quat, omega=omega_body, mass=np.array([total_mass])
+        pos=pos,
+        vel=vel,
+        quat=quat,
+        omega=omega_body,
+        mass=np.array([total_mass]),
+        inertia_body=inertia_body,
     )
     state = SystemState(rigid_bodies=rb)
 

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "name": "Rigid body spin (box)",
+    "description": "Torque-free rigid body box spin."
+  },
+  "simulation": {
+    "dt": 0.002,
+    "steps": 2000,
+    "integrator": "velocity_verlet"
+  },
+  "entities": {
+    "rigid_bodies": {
+      "pos": [[0.0, 0.0, 0.0]],
+      "vel": [[0.0, 0.0, 0.0]],
+      "quat": [[1.0, 0.0, 0.0, 0.0]],
+      "omega_body": [[0.2, 0.3, 0.4]],
+      "mass": [2.0],
+      "mass_distribution": {
+        "points_body": [[0.0, 0.0, 0.0]],
+        "point_masses": [2.0],
+        "inertia_body": [
+          [2.1666666667, 0.0, 0.0],
+          [0.0, 1.6666666667, 0.0],
+          [0.0, 0.0, 0.8333333333]
+        ]
+      },
+      "source": [
+        {
+          "kind": "box",
+          "params": {"size": [1.0, 2.0, 3.0]},
+          "mass": 2.0
+        }
+      ]
+    }
+  },
+  "models": []
+}

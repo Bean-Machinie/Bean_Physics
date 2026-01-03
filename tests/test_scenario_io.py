@@ -37,6 +37,15 @@ def test_round_trip(tmp_path: Path) -> None:
     assert _scenario_equal(defn, defn2)
 
 
+def test_round_trip_rigid_body(tmp_path: Path) -> None:
+    src = Path("examples/scenarios/rigid_body_spin_box_v1.json")
+    defn = load_scenario(src)
+    out = tmp_path / "roundtrip_rigid.json"
+    save_scenario(out, defn)
+    defn2 = load_scenario(out)
+    assert _scenario_equal(defn, defn2)
+
+
 def test_determinism_two_body() -> None:
     defn = load_scenario("examples/scenarios/two_body_orbit_v1.json")
     state1, model1, integrator1, dt1, steps1, _ = scenario_to_runtime(defn)

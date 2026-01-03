@@ -6,7 +6,12 @@ from typing import Iterable
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .objects_utils import ObjectRef, force_summary, particle_summary
+from .objects_utils import (
+    ObjectRef,
+    force_summary,
+    particle_summary,
+    rigid_body_summary,
+)
 
 
 class ObjectsPanel(QtWidgets.QWidget):
@@ -44,6 +49,7 @@ class ObjectsPanel(QtWidgets.QWidget):
         self,
         defn: dict,
         particles: Iterable[ObjectRef],
+        rigid_bodies: Iterable[ObjectRef],
         forces: Iterable[ObjectRef],
     ) -> None:
         self._list.blockSignals(True)
@@ -52,6 +58,22 @@ class ObjectsPanel(QtWidgets.QWidget):
         for obj in particles:
             summary = particle_summary(defn, obj.index)
             title = f"Particle {obj.index + 1}"
+            detail = (
+                f"mass {summary['mass']:.3g}  "
+                f"pos ({summary['x']:.3g}, {summary['y']:.3g}, {summary['z']:.3g})"
+            )
+            self._add_item(obj, title, detail)
+
+        self._add_section("Rigid Bodies")
+        for obj in rigid_bodies:
+            summary = rigid_body_summary(defn, obj.index)
+            source = summary["source"]
+            kind = "Rigid Body"
+            if source and source.get("kind") == "box":
+                kind = "Box"
+            elif source and source.get("kind") == "sphere":
+                kind = "Sphere"
+            title = f"{kind} {obj.index + 1}"
             detail = (
                 f"mass {summary['mass']:.3g}  "
                 f"pos ({summary['x']:.3g}, {summary['y']:.3g}, {summary['z']:.3g})"

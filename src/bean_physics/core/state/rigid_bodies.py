@@ -24,6 +24,7 @@ class RigidBodiesState:
     quat: ArrayF
     omega: ArrayF
     mass: ArrayF
+    inertia_body: ArrayF
 
     def __post_init__(self) -> None:
         self.pos = np.ascontiguousarray(self.pos, dtype=np.float64)
@@ -31,6 +32,7 @@ class RigidBodiesState:
         self.quat = np.ascontiguousarray(self.quat, dtype=np.float64)
         self.omega = np.ascontiguousarray(self.omega, dtype=np.float64)
         self.mass = np.ascontiguousarray(self.mass, dtype=np.float64)
+        self.inertia_body = np.ascontiguousarray(self.inertia_body, dtype=np.float64)
         self.validate(strict_quat=False)
 
     def validate(self, strict_quat: bool = False) -> None:
@@ -46,6 +48,12 @@ class RigidBodiesState:
             raise ValueError("quat must match number of bodies")
         if self.mass.ndim != 1 or self.mass.shape[0] != self.pos.shape[0]:
             raise ValueError("mass must have shape (M,)")
+        if self.inertia_body.ndim == 2:
+            self.inertia_body = np.broadcast_to(
+                self.inertia_body, (self.mass.shape[0], 3, 3)
+            ).copy()
+        if self.inertia_body.shape != (self.mass.shape[0], 3, 3):
+            raise ValueError("inertia_body must have shape (M, 3, 3)")
 
         if strict_quat:
             norms = np.linalg.norm(self.quat, axis=-1)
@@ -61,4 +69,5 @@ class RigidBodiesState:
             quat=self.quat.copy(),
             omega=self.omega.copy(),
             mass=self.mass.copy(),
+            inertia_body=self.inertia_body.copy(),
         )

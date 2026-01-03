@@ -5,7 +5,9 @@ import numpy as np
 from bean_physics.core.forces import RigidBodyForces
 from bean_physics.core.integrators import VelocityVerlet
 from bean_physics.core.math.quat import quat_to_rotmat
+from bean_physics.core.rigid_body.mass_properties import box_inertia_body
 from bean_physics.core.state import RigidBodiesState, SystemState
+from bean_physics.io.scenario import scenario_to_runtime
 
 
 def _make_state(omega_body: np.ndarray) -> SystemState:
@@ -13,7 +15,15 @@ def _make_state(omega_body: np.ndarray) -> SystemState:
     vel = np.zeros((1, 3), dtype=np.float64)
     quat = np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float64)
     mass = np.array([1.0], dtype=np.float64)
-    rb = RigidBodiesState(pos=pos, vel=vel, quat=quat, omega=omega_body, mass=mass)
+    inertia = np.eye(3, dtype=np.float64)
+    rb = RigidBodiesState(
+        pos=pos,
+        vel=vel,
+        quat=quat,
+        omega=omega_body,
+        mass=mass,
+        inertia_body=inertia,
+    )
     return SystemState(rigid_bodies=rb)
 
 
@@ -74,3 +84,38 @@ def test_torque_free_angular_momentum_magnitude() -> None:
     l1 = float(np.linalg.norm(l_world1[0]))
 
     assert abs(l1 - l0) / l0 < 1e-3
+
+
+def test_torque_free_spin_stable_quat_norm() -> None:
+    inertia = box_inertia_body(2.0, np.array([1.0, 2.0, 3.0]))
+    defn = {
+        "schema_version": 1,
+        "simulation": {"dt": 0.002, "steps": 1000, "integrator": "velocity_verlet"},
+        "entities": {
+            "rigid_bodies": {
+                "pos": [[0.0, 0.0, 0.0]],
+                "vel": [[0.0, 0.0, 0.0]],
+                "quat": [[1.0, 0.0, 0.0, 0.0]],
+                "omega_body": [[0.2, 0.3, 0.4]],
+                "mass": [2.0],
+                "mass_distribution": {
+                    "points_body": [[0.0, 0.0, 0.0]],
+                    "point_masses": [2.0],
+                    "inertia_body": inertia.tolist(),
+                },
+                "source": [
+                    {
+                        "kind": "box",
+                        "params": {"size": [1.0, 2.0, 3.0]},
+                        "mass": 2.0,
+                    }
+                ],
+            }
+        },
+        "models": [],
+    }
+    state, model, integrator, dt, steps, _ = scenario_to_runtime(defn)
+    for _ in range(steps):
+        integrator.step(state, model, dt)
+    q_norm = float(np.linalg.norm(state.rigid_bodies.quat[0]))
+    assert abs(q_norm - 1.0) < 1e-4

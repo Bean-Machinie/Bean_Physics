@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from typing import Sequence
 
+import numpy as np
 from PySide6 import QtCore, QtWidgets
 
 from .panels.objects_utils import (
     ObjectRef,
     apply_nbody_gravity,
     apply_particle_edit,
+    apply_rigid_body_edit,
     apply_uniform_gravity,
     force_summary,
     particle_summary,
+    rigid_body_summary,
 )
 
 
@@ -66,6 +69,37 @@ class ObjectInspector(QtWidgets.QDialog):
         nbody_form.addRow("Chunk size", self._chunk)
         self._stack.addWidget(self._nbody_page)
 
+        self._rigid_page = QtWidgets.QWidget()
+        rigid_form = QtWidgets.QFormLayout(self._rigid_page)
+        self._rb_kind = QtWidgets.QComboBox(self)
+        self._rb_kind.addItem("Box", "box")
+        self._rb_kind.addItem("Sphere", "sphere")
+        self._rb_kind.currentIndexChanged.connect(self._on_rigid_kind_changed)
+        self._rb_size = _vector_fields(min_value=1e-6)
+        self._rb_radius = QtWidgets.QDoubleSpinBox(self)
+        self._rb_radius.setRange(1e-6, 1e6)
+        self._rb_radius.setDecimals(6)
+        self._rb_radius.setValue(0.5)
+        self._rb_mass = QtWidgets.QDoubleSpinBox(self)
+        self._rb_mass.setRange(1e-12, 1e12)
+        self._rb_mass.setDecimals(6)
+        self._rb_mass.setValue(1.0)
+        self._rb_pos = _vector_fields()
+        self._rb_vel = _vector_fields()
+        self._rb_quat = _quat_fields()
+        self._rb_omega = _vector_fields()
+        self._rb_inertia = _vector_fields(read_only=True)
+        rigid_form.addRow("Template", self._rb_kind)
+        rigid_form.addRow("Size", _vector_widget(self._rb_size))
+        rigid_form.addRow("Radius", self._rb_radius)
+        rigid_form.addRow("Mass", self._rb_mass)
+        rigid_form.addRow("Position", _vector_widget(self._rb_pos))
+        rigid_form.addRow("Velocity", _vector_widget(self._rb_vel))
+        rigid_form.addRow("Quat (w,x,y,z)", _vector_widget(self._rb_quat))
+        rigid_form.addRow("Omega body", _vector_widget(self._rb_omega))
+        rigid_form.addRow("Inertia diag", _vector_widget(self._rb_inertia))
+        self._stack.addWidget(self._rigid_page)
+
         self._btn_apply = QtWidgets.QPushButton("Apply", self)
         self._btn_revert = QtWidgets.QPushButton("Revert", self)
         self._btn_close = QtWidgets.QPushButton("Close", self)
@@ -117,6 +151,31 @@ class ObjectInspector(QtWidgets.QDialog):
                 self._stack.setCurrentWidget(self._nbody_page)
                 self._set_enabled(True)
                 return
+        if self._obj.type == "rigid_body":
+            summary = rigid_body_summary(self._defn, self._obj.index)
+            source = summary["source"] or {}
+            kind = source.get("kind", "box")
+            params = source.get("params", {})
+            self._rb_kind.setCurrentIndex(
+                0 if kind == "box" else 1
+            )
+            size = params.get("size", [1.0, 1.0, 1.0])
+            _set_vector(self._rb_size, size[0], size[1], size[2])
+            self._rb_radius.setValue(float(params.get("radius", 0.5)))
+            self._rb_mass.setValue(summary["mass"])
+            _set_vector(self._rb_pos, summary["x"], summary["y"], summary["z"])
+            _set_vector(self._rb_vel, summary["vx"], summary["vy"], summary["vz"])
+            _set_quat(self._rb_quat, summary["qw"], summary["qx"], summary["qy"], summary["qz"])
+            _set_vector(self._rb_omega, summary["wx"], summary["wy"], summary["wz"])
+            inertia = summary["inertia_body"]
+            inertia_diag = np.diag(inertia)
+            _set_vector(self._rb_inertia, inertia_diag[0], inertia_diag[1], inertia_diag[2])
+            self._on_rigid_kind_changed()
+            self._stack.setCurrentWidget(self._rigid_page)
+            self._set_enabled(True)
+            if summary["source"] is None:
+                self._set_rigid_custom()
+            return
         self._set_enabled(False)
         self._stack.setCurrentWidget(self._page_empty)
 
@@ -129,6 +188,15 @@ class ObjectInspector(QtWidgets.QDialog):
             self._G,
             self._softening,
             self._chunk,
+            self._rb_kind,
+            *self._rb_size,
+            self._rb_radius,
+            self._rb_mass,
+            *self._rb_pos,
+            *self._rb_vel,
+            *self._rb_quat,
+            *self._rb_omega,
+            *self._rb_inertia,
         ]
         for field in widgets:
             field.setEnabled(enabled)
@@ -160,6 +228,23 @@ class ObjectInspector(QtWidgets.QDialog):
                     )
                 else:
                     raise ValueError("unsupported force type")
+            elif self._obj.type == "rigid_body":
+                kind = self._rb_kind.currentData()
+                if kind == "box":
+                    params = {"size": self._vector_values(self._rb_size)}
+                else:
+                    params = {"radius": self._rb_radius.value()}
+                apply_rigid_body_edit(
+                    self._defn,
+                    self._obj.index,
+                    kind,
+                    params,
+                    self._rb_mass.value(),
+                    self._vector_values(self._rb_pos),
+                    self._vector_values(self._rb_vel),
+                    self._quat_values(self._rb_quat),
+                    self._vector_values(self._rb_omega),
+                )
             else:
                 return
         except Exception as exc:  # pragma: no cover - Qt error path
@@ -170,18 +255,36 @@ class ObjectInspector(QtWidgets.QDialog):
     def _on_revert(self) -> None:
         self._sync_from_defn()
 
+    def _set_rigid_custom(self) -> None:
+        for widget in [self._rb_kind, *self._rb_size, self._rb_radius, self._rb_mass]:
+            widget.setEnabled(False)
+
+    def _on_rigid_kind_changed(self) -> None:
+        kind = self._rb_kind.currentData()
+        is_box = kind == "box"
+        for widget in self._rb_size:
+            widget.setVisible(is_box)
+        self._rb_radius.setVisible(not is_box)
+
     @staticmethod
     def _vector_values(fields: Sequence[QtWidgets.QDoubleSpinBox]) -> list[float]:
         return [field.value() for field in fields]
 
+    @staticmethod
+    def _quat_values(fields: Sequence[QtWidgets.QDoubleSpinBox]) -> list[float]:
+        return [field.value() for field in fields]
 
-def _vector_fields() -> tuple[QtWidgets.QDoubleSpinBox, QtWidgets.QDoubleSpinBox, QtWidgets.QDoubleSpinBox]:
+
+def _vector_fields(
+    min_value: float = -1e9, read_only: bool = False
+) -> tuple[QtWidgets.QDoubleSpinBox, QtWidgets.QDoubleSpinBox, QtWidgets.QDoubleSpinBox]:
     fields = []
     for _ in range(3):
         spin = QtWidgets.QDoubleSpinBox()
-        spin.setRange(-1e9, 1e9)
+        spin.setRange(min_value, 1e9)
         spin.setDecimals(6)
         spin.setSingleStep(0.1)
+        spin.setReadOnly(read_only)
         fields.append(spin)
     return fields[0], fields[1], fields[2]
 
@@ -201,3 +304,28 @@ def _set_vector(
     fields[0].setValue(x)
     fields[1].setValue(y)
     fields[2].setValue(z)
+
+
+def _quat_fields() -> tuple[
+    QtWidgets.QDoubleSpinBox,
+    QtWidgets.QDoubleSpinBox,
+    QtWidgets.QDoubleSpinBox,
+    QtWidgets.QDoubleSpinBox,
+]:
+    fields = []
+    for _ in range(4):
+        spin = QtWidgets.QDoubleSpinBox()
+        spin.setRange(-10.0, 10.0)
+        spin.setDecimals(6)
+        spin.setSingleStep(0.05)
+        fields.append(spin)
+    return fields[0], fields[1], fields[2], fields[3]
+
+
+def _set_quat(
+    fields: Sequence[QtWidgets.QDoubleSpinBox], w: float, x: float, y: float, z: float
+) -> None:
+    fields[0].setValue(w)
+    fields[1].setValue(x)
+    fields[2].setValue(y)
+    fields[3].setValue(z)

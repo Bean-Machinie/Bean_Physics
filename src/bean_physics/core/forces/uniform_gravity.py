@@ -21,3 +21,11 @@ class UniformGravity(ParticleOnlyModel):
         if n == 0:
             return np.zeros((0, 3), dtype=np.float64)
         return np.broadcast_to(self.g, (n, 3)).copy()
+
+    def acc_rigid(self, state: SystemState) -> np.ndarray:
+        if state.rigid_bodies is None:
+            return np.zeros((0, 3), dtype=np.float64)
+        m = state.rigid_bodies.pos.shape[0]
+        if m == 0:
+            return np.zeros((0, 3), dtype=np.float64)
+        return np.broadcast_to(self.g, (m, 3)).copy()

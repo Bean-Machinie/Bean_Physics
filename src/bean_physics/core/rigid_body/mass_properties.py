@@ -35,3 +35,32 @@ def mass_properties(points_body: np.ndarray, masses: np.ndarray) -> tuple[float,
         axis=0,
     )
     return total_mass, com, inertia
+
+
+def box_inertia_body(mass: float, size: np.ndarray) -> np.ndarray:
+    """Return inertia tensor for a box about CoM in body frame."""
+    mass_val = float(mass)
+    if mass_val <= 0.0:
+        raise ValueError("mass must be > 0")
+    dims = np.asarray(size, dtype=np.float64)
+    if dims.shape != (3,):
+        raise ValueError("size must have shape (3,)")
+    if np.any(dims <= 0.0):
+        raise ValueError("size values must be > 0")
+    sx, sy, sz = dims
+    ixx = (mass_val / 12.0) * (sy * sy + sz * sz)
+    iyy = (mass_val / 12.0) * (sx * sx + sz * sz)
+    izz = (mass_val / 12.0) * (sx * sx + sy * sy)
+    return np.diag([ixx, iyy, izz])
+
+
+def sphere_inertia_body(mass: float, radius: float) -> np.ndarray:
+    """Return inertia tensor for a solid sphere about CoM in body frame."""
+    mass_val = float(mass)
+    if mass_val <= 0.0:
+        raise ValueError("mass must be > 0")
+    radius_val = float(radius)
+    if radius_val <= 0.0:
+        raise ValueError("radius must be > 0")
+    i = (2.0 / 5.0) * mass_val * radius_val * radius_val
+    return np.diag([i, i, i])

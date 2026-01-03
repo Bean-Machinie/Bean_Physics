@@ -6,6 +6,13 @@ import math
 from dataclasses import dataclass
 from typing import Sequence
 
+import numpy as np
+
+from ...core.rigid_body.mass_properties import (
+    box_inertia_body,
+    mass_properties,
+    sphere_inertia_body,
+)
 from ...io.scenario import ScenarioDefinition
 
 
@@ -35,6 +42,15 @@ def list_forces(defn: ScenarioDefinition) -> list[ObjectRef]:
         if key in {"uniform_gravity", "nbody_gravity"}:
             refs.append(ObjectRef(type="force", index=idx, subtype=key))
     return refs
+
+
+def list_rigid_bodies(defn: ScenarioDefinition) -> list[ObjectRef]:
+    entities = defn.get("entities", {})
+    rigid = entities.get("rigid_bodies")
+    if not rigid:
+        return []
+    count = len(rigid.get("mass", []))
+    return [ObjectRef(type="rigid_body", index=i) for i in range(count)]
 
 
 def particle_summary(defn: ScenarioDefinition, index: int) -> dict[str, float]:
@@ -74,6 +90,60 @@ def force_summary(defn: ScenarioDefinition, model_index: int) -> dict[str, objec
     raise ValueError("unsupported force type")
 
 
+def rigid_body_summary(defn: ScenarioDefinition, index: int) -> dict[str, object]:
+    rigid = _require_rigid(defn)
+    _validate_rigid_index(rigid, index)
+    pos = rigid["pos"][index]
+    vel = rigid["vel"][index]
+    quat = rigid["quat"][index]
+    omega = rigid["omega_body"][index]
+    mass = rigid["mass"][index]
+    source = _rigid_source_entry(rigid, index)
+    inertia = _rigid_inertia_body(rigid, index)
+    return {
+        "x": float(pos[0]),
+        "y": float(pos[1]),
+        "z": float(pos[2]),
+        "vx": float(vel[0]),
+        "vy": float(vel[1]),
+        "vz": float(vel[2]),
+        "qw": float(quat[0]),
+        "qx": float(quat[1]),
+        "qy": float(quat[2]),
+        "qz": float(quat[3]),
+        "wx": float(omega[0]),
+        "wy": float(omega[1]),
+        "wz": float(omega[2]),
+        "mass": float(mass),
+        "source": source,
+        "inertia_body": inertia,
+    }
+
+
+def rigid_body_shapes(defn: ScenarioDefinition | None) -> list[dict[str, object]]:
+    if defn is None:
+        return []
+    rigid = defn.get("entities", {}).get("rigid_bodies")
+    if not rigid:
+        return []
+    count = len(rigid.get("mass", []))
+    shapes: list[dict[str, object]] = []
+    for idx in range(count):
+        source = _rigid_source_entry(rigid, idx)
+        if source is None:
+            shapes.append({"kind": "sphere", "radius": 0.5})
+            continue
+        kind = source.get("kind")
+        params = source.get("params", {})
+        if kind == "box":
+            shapes.append({"kind": "box", "size": params.get("size", [1.0, 1.0, 1.0])})
+        elif kind == "sphere":
+            shapes.append({"kind": "sphere", "radius": params.get("radius", 0.5)})
+        else:
+            shapes.append({"kind": "sphere", "radius": 0.5})
+    return shapes
+
+
 def add_particle(defn: ScenarioDefinition) -> int:
     entities = defn.setdefault("entities", {})
     particles = entities.setdefault("particles", {"pos": [], "vel": [], "mass": []})
@@ -110,6 +180,56 @@ def add_nbody_gravity(
     return len(models) - 1
 
 
+def add_rigid_body_template(
+    defn: ScenarioDefinition, kind: str, params: dict[str, object] | None = None
+) -> int:
+    kind = kind.lower().strip()
+    if kind not in {"box", "sphere"}:
+        raise ValueError("unsupported rigid body template")
+    params = params or {}
+    if kind == "box":
+        size = params.get("size", [1.0, 1.0, 1.0])
+        inertia = box_inertia_body(1.0, np.asarray(size, dtype=np.float64))
+        source_params = {"size": [float(v) for v in size]}
+    else:
+        radius = float(params.get("radius", 0.5))
+        inertia = sphere_inertia_body(1.0, radius)
+        source_params = {"radius": radius}
+
+    entities = defn.setdefault("entities", {})
+    rigid = entities.setdefault(
+        "rigid_bodies",
+        {
+            "pos": [],
+            "vel": [],
+            "quat": [],
+            "omega_body": [],
+            "mass": [],
+            "mass_distribution": {"points_body": [[0.0, 0.0, 0.0]], "point_masses": [1.0]},
+        },
+    )
+    for key in ("pos", "vel", "quat", "omega_body", "mass"):
+        rigid.setdefault(key, [])
+    rigid.setdefault(
+        "mass_distribution",
+        {"points_body": [[0.0, 0.0, 0.0]], "point_masses": [1.0]},
+    )
+
+    rigid["pos"].append([0.0, 0.0, 0.0])
+    rigid["vel"].append([0.0, 0.0, 0.0])
+    rigid["quat"].append([1.0, 0.0, 0.0, 0.0])
+    rigid["omega_body"].append([0.0, 0.0, 0.0])
+    rigid["mass"].append(1.0)
+
+    sources = rigid.setdefault("source", [])
+    sources.append({"kind": kind, "params": source_params, "mass": 1.0})
+
+    inertia_list = _rigid_inertia_list(rigid)
+    inertia_list.append(inertia)
+    _set_rigid_inertia_list(rigid, inertia_list)
+    return len(rigid["mass"]) - 1
+
+
 def remove_particle(defn: ScenarioDefinition, index: int) -> None:
     particles = defn.get("entities", {}).get("particles")
     if not particles:
@@ -131,6 +251,27 @@ def remove_force(defn: ScenarioDefinition, model_index: int) -> None:
     if model_index < 0 or model_index >= len(models):
         raise IndexError("force index out of range")
     del models[model_index]
+
+
+def remove_rigid_body(defn: ScenarioDefinition, index: int) -> None:
+    rigid = defn.get("entities", {}).get("rigid_bodies")
+    if not rigid:
+        raise ValueError("no rigid bodies to remove")
+    _validate_rigid_index(rigid, index)
+    for key in ("pos", "vel", "quat", "omega_body", "mass"):
+        del rigid[key][index]
+    sources = rigid.get("source")
+    if isinstance(sources, list) and len(sources) > index:
+        del sources[index]
+    inertia_list = _rigid_inertia_list(rigid)
+    if inertia_list:
+        del inertia_list[index]
+        _set_rigid_inertia_list(rigid, inertia_list)
+    if not rigid["mass"]:
+        entities = defn.get("entities", {})
+        entities.pop("rigid_bodies", None)
+        if not entities:
+            defn.pop("entities", None)
 
 
 def apply_particle_edit(
@@ -182,6 +323,63 @@ def apply_nbody_gravity(
     )
 
 
+def apply_rigid_body_edit(
+    defn: ScenarioDefinition,
+    index: int,
+    kind: str,
+    params: dict[str, object],
+    mass: object,
+    pos: Sequence[object],
+    vel: Sequence[object],
+    quat: Sequence[object],
+    omega_body: Sequence[object],
+) -> None:
+    rigid = _require_rigid(defn)
+    _validate_rigid_index(rigid, index)
+
+    mass_val = _validate_float(mass, "mass", positive=True, allow_zero=False)
+    pos_vals = _validate_vec3(pos, "pos")
+    vel_vals = _validate_vec3(vel, "vel")
+    omega_vals = _validate_vec3(omega_body, "omega_body")
+    quat_vals = _validate_quat(quat)
+
+    kind = kind.lower().strip()
+    if kind not in {"box", "sphere"}:
+        raise ValueError("unsupported rigid body template")
+
+    if kind == "box":
+        size = params.get("size")
+        if size is None:
+            raise ValueError("size is required for box")
+        inertia = box_inertia_body(mass_val, np.asarray(size, dtype=np.float64))
+        source_params = {"size": [float(v) for v in size]}
+    else:
+        radius = params.get("radius")
+        if radius is None:
+            raise ValueError("radius is required for sphere")
+        inertia = sphere_inertia_body(mass_val, float(radius))
+        source_params = {"radius": float(radius)}
+
+    rigid["pos"][index] = pos_vals
+    rigid["vel"][index] = vel_vals
+    rigid["quat"][index] = quat_vals
+    rigid["omega_body"][index] = omega_vals
+    rigid["mass"][index] = mass_val
+
+    sources = rigid.setdefault("source", [])
+    while len(sources) < len(rigid["mass"]):
+        sources.append(
+            {"kind": "box", "params": {"size": [1.0, 1.0, 1.0]}, "mass": 1.0}
+        )
+    sources[index] = {"kind": kind, "params": source_params, "mass": mass_val}
+
+    inertia_list = _rigid_inertia_list(rigid)
+    while len(inertia_list) < len(rigid["mass"]):
+        inertia_list.append(np.eye(3, dtype=np.float64))
+    inertia_list[index] = inertia
+    _set_rigid_inertia_list(rigid, inertia_list)
+
+
 def validate_nbody_fields(
     G: object, softening: object, chunk_size: object | None
 ) -> tuple[float, float, int | None]:
@@ -210,6 +408,83 @@ def _set_force(
     if model_index < 0 or model_index >= len(models):
         raise IndexError("force index out of range")
     models[model_index] = {key: payload}
+
+
+def _require_rigid(defn: ScenarioDefinition) -> dict[str, object]:
+    rigid = defn.get("entities", {}).get("rigid_bodies")
+    if not rigid:
+        raise ValueError("no rigid bodies in scenario")
+    return rigid
+
+
+def _validate_rigid_index(rigid: dict[str, object], index: int) -> None:
+    if index < 0 or index >= len(rigid.get("mass", [])):
+        raise IndexError("rigid body index out of range")
+
+
+def _rigid_source_entry(
+    rigid: dict[str, object], index: int
+) -> dict[str, object] | None:
+    sources = rigid.get("source")
+    if not isinstance(sources, list) or index >= len(sources):
+        return None
+    return sources[index]
+
+
+def _rigid_inertia_body(rigid: dict[str, object], index: int) -> np.ndarray:
+    inertia_list = _rigid_inertia_list(rigid)
+    if inertia_list:
+        if len(inertia_list) == 1:
+            return inertia_list[0]
+        return inertia_list[index]
+    mass_dist = rigid.get("mass_distribution", {})
+    points_body = np.asarray(mass_dist.get("points_body", []), dtype=np.float64)
+    point_masses = np.asarray(mass_dist.get("point_masses", []), dtype=np.float64)
+    if points_body.size == 0 or point_masses.size == 0:
+        return np.eye(3, dtype=np.float64)
+    _, _, inertia = mass_properties(points_body, point_masses)
+    return inertia
+
+
+def _rigid_inertia_list(rigid: dict[str, object]) -> list[np.ndarray]:
+    mass_dist = rigid.get("mass_distribution", {})
+    inertia = mass_dist.get("inertia_body")
+    if inertia is None:
+        return []
+    arr = np.asarray(inertia, dtype=np.float64)
+    if arr.ndim == 2:
+        return [arr]
+    if arr.ndim == 3:
+        return [arr[i] for i in range(arr.shape[0])]
+    return []
+
+
+def _set_rigid_inertia_list(
+    rigid: dict[str, object], inertia_list: Sequence[np.ndarray]
+) -> None:
+    mass_dist = rigid.setdefault(
+        "mass_distribution",
+        {"points_body": [[0.0, 0.0, 0.0]], "point_masses": [1.0]},
+    )
+    if len(inertia_list) == 1:
+        mass_dist["inertia_body"] = inertia_list[0].tolist()
+    else:
+        mass_dist["inertia_body"] = [arr.tolist() for arr in inertia_list]
+
+
+def _validate_quat(values: Sequence[object]) -> list[float]:
+    if len(values) != 4:
+        raise ValueError("quat must have 4 values")
+    cleaned = []
+    for value in values:
+        fval = _validate_float(value, "quat", positive=False, allow_zero=True)
+        cleaned.append(fval)
+    q = np.asarray(cleaned, dtype=np.float64)
+    norm = np.linalg.norm(q)
+    if norm == 0.0:
+        raise ValueError("quat must be non-zero")
+    q = q / norm
+    return [float(v) for v in q]
 
 
 def _validate_vec3(values: Sequence[object], name: str) -> list[float]:
