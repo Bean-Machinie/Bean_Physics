@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from .objects_utils import ObjectRef, force_summary, particle_summary
 
@@ -12,9 +12,7 @@ from .objects_utils import ObjectRef, force_summary, particle_summary
 class ObjectsPanel(QtWidgets.QWidget):
     selection_changed = QtCore.Signal(object)
     item_activated = QtCore.Signal(object)
-    add_particle_requested = QtCore.Signal()
-    add_uniform_requested = QtCore.Signal()
-    add_nbody_requested = QtCore.Signal()
+    add_object_requested = QtCore.Signal(object)
     remove_requested = QtCore.Signal(object)
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
@@ -27,19 +25,13 @@ class ObjectsPanel(QtWidgets.QWidget):
         self._list.itemClicked.connect(self._on_item_clicked)
         self._list.itemDoubleClicked.connect(self._on_item_activated)
 
-        self._btn_add_particle = QtWidgets.QPushButton("Add Particle", self)
-        self._btn_add_uniform = QtWidgets.QPushButton("Add Uniform Gravity", self)
-        self._btn_add_nbody = QtWidgets.QPushButton("Add N-body Gravity", self)
-        self._btn_remove = QtWidgets.QPushButton("Remove Selected", self)
-        self._btn_add_particle.clicked.connect(self.add_particle_requested.emit)
-        self._btn_add_uniform.clicked.connect(self.add_uniform_requested.emit)
-        self._btn_add_nbody.clicked.connect(self.add_nbody_requested.emit)
+        self._btn_add = QtWidgets.QPushButton("Add...", self)
+        self._btn_add.setMenu(self._build_add_menu())
+        self._btn_remove = QtWidgets.QPushButton("Delete Selected", self)
         self._btn_remove.clicked.connect(self._on_remove_clicked)
 
         button_row = QtWidgets.QHBoxLayout()
-        button_row.addWidget(self._btn_add_particle)
-        button_row.addWidget(self._btn_add_uniform)
-        button_row.addWidget(self._btn_add_nbody)
+        button_row.addWidget(self._btn_add)
         button_row.addWidget(self._btn_remove)
         button_row.addStretch(1)
 
@@ -111,6 +103,32 @@ class ObjectsPanel(QtWidgets.QWidget):
 
     def _on_remove_clicked(self) -> None:
         self.remove_requested.emit(self.selected_object())
+
+    def _build_add_menu(self) -> QtWidgets.QMenu:
+        menu = QtWidgets.QMenu(self)
+        particle_action = menu.addAction("Particle")
+        particle_action.setData({"type": "particle"})
+
+        force_menu = menu.addMenu("Force")
+        uniform_action = force_menu.addAction("Uniform Gravity")
+        uniform_action.setData({"type": "force", "subtype": "uniform_gravity"})
+        nbody_action = force_menu.addAction("N-body Gravity")
+        nbody_action.setData({"type": "force", "subtype": "nbody_gravity"})
+
+        rigid_menu = menu.addMenu("Rigid Body")
+        box_action = rigid_menu.addAction("Box (Template)")
+        box_action.setData({"type": "rigid_body", "subtype": "box"})
+        sphere_action = rigid_menu.addAction("Sphere (Template)")
+        sphere_action.setData({"type": "rigid_body", "subtype": "sphere"})
+
+        menu.triggered.connect(self._on_add_action_triggered)
+        return menu
+
+    def _on_add_action_triggered(self, action: QtGui.QAction) -> None:
+        data = action.data()
+        if not data:
+            return
+        self.add_object_requested.emit(data)
 
     def _add_section(self, label: str) -> None:
         item = QtWidgets.QListWidgetItem(label)

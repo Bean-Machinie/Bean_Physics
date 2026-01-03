@@ -50,9 +50,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._objects_panel = ObjectsPanel(self)
         self._objects_panel.selection_changed.connect(self._on_object_selected)
         self._objects_panel.item_activated.connect(self._on_object_activated)
-        self._objects_panel.add_particle_requested.connect(self._on_add_particle)
-        self._objects_panel.add_uniform_requested.connect(self._on_add_uniform_gravity)
-        self._objects_panel.add_nbody_requested.connect(self._on_add_nbody_gravity)
+        self._objects_panel.add_object_requested.connect(self._on_add_object)
         self._objects_panel.remove_requested.connect(self._on_remove_selected)
 
         self._inspector = ObjectInspector(self)
@@ -439,35 +437,57 @@ class MainWindow(QtWidgets.QMainWindow):
         self._inspector.activateWindow()
 
     def _on_add_particle(self) -> None:
-        if self._session.scenario_def is None:
-            self._session.scenario_def = self._session.new_default()
-        index = add_particle(self._session.scenario_def)
-        self._session.mark_dirty()
-        self._controller.load_definition(self._session.scenario_def)
-        self._controller.scenario_path = self._session.scenario_path
-        self._running = False
-        self._apply_state_to_viewport()
-        self._refresh_objects_panel()
-        obj = ObjectRef(type="particle", index=index)
-        self._objects_panel.select_object(obj)
-        self._inspector.set_target(self._session.scenario_def, obj)
-        self._update_action_state()
-        self._update_status()
-        self._update_window_title()
+        self._add_object("particle", None)
 
     def _on_add_uniform_gravity(self) -> None:
-        if self._session.scenario_def is None:
-            self._session.scenario_def = self._session.new_default()
-        index = add_uniform_gravity(self._session.scenario_def, [0.0, -9.81, 0.0])
-        obj = ObjectRef(type="force", index=index, subtype="uniform_gravity")
-        self._after_force_change(obj)
+        self._add_object("force", "uniform_gravity")
 
     def _on_add_nbody_gravity(self) -> None:
+        self._add_object("force", "nbody_gravity")
+
+    def _on_add_object(self, payload: dict[str, object]) -> None:
+        obj_type = payload.get("type")
+        subtype = payload.get("subtype")
+        if not isinstance(obj_type, str):
+            return
+        if subtype is not None and not isinstance(subtype, str):
+            return
+        self._add_object(obj_type, subtype)
+
+    def _add_object(self, obj_type: str, subtype: str | None) -> None:
         if self._session.scenario_def is None:
             self._session.scenario_def = self._session.new_default()
-        index = add_nbody_gravity(self._session.scenario_def, 1.0, 0.0, None)
-        obj = ObjectRef(type="force", index=index, subtype="nbody_gravity")
-        self._after_force_change(obj)
+        if obj_type == "particle":
+            index = add_particle(self._session.scenario_def)
+            self._session.mark_dirty()
+            self._controller.load_definition(self._session.scenario_def)
+            self._controller.scenario_path = self._session.scenario_path
+            self._running = False
+            self._apply_state_to_viewport()
+            self._refresh_objects_panel()
+            obj = ObjectRef(type="particle", index=index)
+            self._objects_panel.select_object(obj)
+            self._inspector.set_target(self._session.scenario_def, obj)
+            self._update_action_state()
+            self._update_status()
+            self._update_window_title()
+            return
+        if obj_type == "force" and subtype == "uniform_gravity":
+            index = add_uniform_gravity(self._session.scenario_def, [0.0, -9.81, 0.0])
+            obj = ObjectRef(type="force", index=index, subtype="uniform_gravity")
+            self._after_force_change(obj)
+            return
+        if obj_type == "force" and subtype == "nbody_gravity":
+            index = add_nbody_gravity(self._session.scenario_def, 1.0, 0.0, None)
+            obj = ObjectRef(type="force", index=index, subtype="nbody_gravity")
+            self._after_force_change(obj)
+            return
+        if obj_type == "rigid_body":
+            QtWidgets.QMessageBox.information(
+                self,
+                "Not Implemented",
+                "Rigid body templates are not implemented yet.",
+            )
 
     def _on_remove_selected(self, obj: ObjectRef | None) -> None:
         if obj is None or self._session.scenario_def is None:
