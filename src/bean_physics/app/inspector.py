@@ -25,6 +25,7 @@ from .panels.objects_utils import (
     set_rigid_body_visual,
 )
 from ..core.rigid_body.mass_properties import rigid_body_from_points, shift_points_to_com
+from ..io.units import UnitsConfig, label_for
 from .visual_assets import loader_available
 
 
@@ -39,22 +40,25 @@ class ObjectInspector(QtWidgets.QDialog):
         self._obj: ObjectRef | None = None
         self._scenario_path: Path | None = None
         self._updating_points = False
+        self._units_cfg = UnitsConfig(preset="SI", enabled=True)
 
         self._stack = QtWidgets.QStackedWidget(self)
         self._page_empty = QtWidgets.QWidget()
         self._stack.addWidget(self._page_empty)
 
         self._particle_page = QtWidgets.QWidget()
-        particle_form = QtWidgets.QFormLayout(self._particle_page)
+        self._particle_form = QtWidgets.QFormLayout(self._particle_page)
         self._pos = _vector_fields()
         self._vel = _vector_fields()
         self._mass = QtWidgets.QDoubleSpinBox(self)
         self._mass.setRange(1e-12, 1e12)
         self._mass.setDecimals(6)
         self._mass.setValue(1.0)
-        particle_form.addRow("Position", _vector_widget(self._pos))
-        particle_form.addRow("Velocity", _vector_widget(self._vel))
-        particle_form.addRow("Mass", self._mass)
+        self._particle_pos_widget = _vector_widget(self._pos)
+        self._particle_vel_widget = _vector_widget(self._vel)
+        self._particle_form.addRow("Position", self._particle_pos_widget)
+        self._particle_form.addRow("Velocity", self._particle_vel_widget)
+        self._particle_form.addRow("Mass", self._mass)
         self._particle_visual = _build_visual_controls(self)
         self._particle_visual["attach"].clicked.connect(
             lambda: self._on_attach_visual(self._particle_visual)
@@ -62,17 +66,18 @@ class ObjectInspector(QtWidgets.QDialog):
         self._particle_visual["clear"].clicked.connect(
             lambda: self._on_clear_visual(self._particle_visual)
         )
-        particle_form.addRow("Visual", self._particle_visual["container"])
+        self._particle_form.addRow("Visual", self._particle_visual["container"])
         self._stack.addWidget(self._particle_page)
 
         self._uniform_page = QtWidgets.QWidget()
-        uniform_form = QtWidgets.QFormLayout(self._uniform_page)
+        self._uniform_form = QtWidgets.QFormLayout(self._uniform_page)
         self._g = _vector_fields()
-        uniform_form.addRow("g", _vector_widget(self._g))
+        self._uniform_g_widget = _vector_widget(self._g)
+        self._uniform_form.addRow("g", self._uniform_g_widget)
         self._stack.addWidget(self._uniform_page)
 
         self._nbody_page = QtWidgets.QWidget()
-        nbody_form = QtWidgets.QFormLayout(self._nbody_page)
+        self._nbody_form = QtWidgets.QFormLayout(self._nbody_page)
         self._G = QtWidgets.QDoubleSpinBox(self)
         self._G.setRange(1e-12, 1e12)
         self._G.setDecimals(6)
@@ -83,13 +88,13 @@ class ObjectInspector(QtWidgets.QDialog):
         self._softening.setValue(0.0)
         self._chunk = QtWidgets.QLineEdit(self)
         self._chunk.setPlaceholderText("blank = None")
-        nbody_form.addRow("G", self._G)
-        nbody_form.addRow("Softening", self._softening)
-        nbody_form.addRow("Chunk size", self._chunk)
+        self._nbody_form.addRow("G", self._G)
+        self._nbody_form.addRow("Softening", self._softening)
+        self._nbody_form.addRow("Chunk size", self._chunk)
         self._stack.addWidget(self._nbody_page)
 
         self._rigid_page = QtWidgets.QWidget()
-        rigid_form = QtWidgets.QFormLayout(self._rigid_page)
+        self._rigid_form = QtWidgets.QFormLayout(self._rigid_page)
         self._rb_kind = QtWidgets.QComboBox(self)
         self._rb_kind.addItem("Box", "box")
         self._rb_kind.addItem("Sphere", "sphere")
@@ -143,21 +148,32 @@ class ObjectInspector(QtWidgets.QDialog):
         self._rb_points_mass.setReadOnly(True)
         self._rb_points_com = _vector_fields(read_only=True)
         self._rb_points_inertia = _matrix_fields(read_only=True)
-        points_layout.addLayout(_form_row("Total Mass", self._rb_points_mass))
-        points_layout.addLayout(_form_row("CoM (body)", _vector_widget(self._rb_points_com)))
+        self._rb_points_mass_label = QtWidgets.QLabel("Total Mass")
+        points_layout.addLayout(_form_row(self._rb_points_mass_label, self._rb_points_mass))
+        self._rb_points_com_label = QtWidgets.QLabel("CoM (body)")
+        self._rb_points_com_widget = _vector_widget(self._rb_points_com)
+        points_layout.addLayout(_form_row(self._rb_points_com_label, self._rb_points_com_widget))
+        self._rb_points_inertia_label = QtWidgets.QLabel("Inertia (body)")
+        self._rb_points_inertia_widget = _matrix_widget(self._rb_points_inertia)
         points_layout.addLayout(
-            _form_row("Inertia (body)", _matrix_widget(self._rb_points_inertia))
+            _form_row(self._rb_points_inertia_label, self._rb_points_inertia_widget)
         )
 
-        rigid_form.addRow("Source Kind", self._rb_kind)
-        rigid_form.addRow("Size", _vector_widget(self._rb_size))
-        rigid_form.addRow("Radius", self._rb_radius)
-        rigid_form.addRow("Mass", self._rb_mass)
-        rigid_form.addRow("Position", _vector_widget(self._rb_pos))
-        rigid_form.addRow("Velocity", _vector_widget(self._rb_vel))
-        rigid_form.addRow("Quat (w,x,y,z)", _vector_widget(self._rb_quat))
-        rigid_form.addRow("Omega body", _vector_widget(self._rb_omega))
-        rigid_form.addRow("Inertia diag", _vector_widget(self._rb_inertia))
+        self._rb_size_widget = _vector_widget(self._rb_size)
+        self._rb_pos_widget = _vector_widget(self._rb_pos)
+        self._rb_vel_widget = _vector_widget(self._rb_vel)
+        self._rb_quat_widget = _vector_widget(self._rb_quat)
+        self._rb_omega_widget = _vector_widget(self._rb_omega)
+        self._rb_inertia_widget = _vector_widget(self._rb_inertia)
+        self._rigid_form.addRow("Source Kind", self._rb_kind)
+        self._rigid_form.addRow("Size", self._rb_size_widget)
+        self._rigid_form.addRow("Radius", self._rb_radius)
+        self._rigid_form.addRow("Mass", self._rb_mass)
+        self._rigid_form.addRow("Position", self._rb_pos_widget)
+        self._rigid_form.addRow("Velocity", self._rb_vel_widget)
+        self._rigid_form.addRow("Quat (w,x,y,z)", self._rb_quat_widget)
+        self._rigid_form.addRow("Omega body", self._rb_omega_widget)
+        self._rigid_form.addRow("Inertia diag", self._rb_inertia_widget)
         self._rigid_visual = _build_visual_controls(self)
         self._rigid_visual["attach"].clicked.connect(
             lambda: self._on_attach_visual(self._rigid_visual)
@@ -165,7 +181,7 @@ class ObjectInspector(QtWidgets.QDialog):
         self._rigid_visual["clear"].clicked.connect(
             lambda: self._on_clear_visual(self._rigid_visual)
         )
-        rigid_form.addRow("Visual", self._rigid_visual["container"])
+        self._rigid_form.addRow("Visual", self._rigid_visual["container"])
         self._rb_forces_widget = QtWidgets.QWidget(self)
         forces_layout = QtWidgets.QVBoxLayout(self._rb_forces_widget)
         forces_layout.setContentsMargins(0, 0, 0, 0)
@@ -197,8 +213,8 @@ class ObjectInspector(QtWidgets.QDialog):
         forces_buttons.addWidget(self._rb_forces_disable_all)
         forces_buttons.addStretch(1)
         forces_layout.addLayout(forces_buttons)
-        rigid_form.addRow("Force Points", self._rb_forces_widget)
-        rigid_form.addRow("Points", self._rb_points_widget)
+        self._rigid_form.addRow("Force Points", self._rb_forces_widget)
+        self._rigid_form.addRow("Points", self._rb_points_widget)
         self._stack.addWidget(self._rigid_page)
 
         self._btn_apply = QtWidgets.QPushButton("Apply", self)
@@ -227,6 +243,13 @@ class ObjectInspector(QtWidgets.QDialog):
         self._defn = defn
         self._obj = obj
         self._scenario_path = scenario_path
+        self._sync_from_defn()
+
+    def set_units(self, cfg: UnitsConfig) -> None:
+        self._units_cfg = cfg
+        self._update_unit_labels()
+
+    def refresh(self) -> None:
         self._sync_from_defn()
 
     def _sync_from_defn(self) -> None:
@@ -301,6 +324,99 @@ class ObjectInspector(QtWidgets.QDialog):
         self._set_enabled(False)
         self._stack.setCurrentWidget(self._page_empty)
 
+    def _update_unit_labels(self) -> None:
+        cfg = self._units_cfg
+        _set_form_label(
+            self._particle_form,
+            self._particle_pos_widget,
+            f"Position ({label_for('length', cfg)})",
+        )
+        _set_form_label(
+            self._particle_form,
+            self._particle_vel_widget,
+            f"Velocity ({label_for('velocity', cfg)})",
+        )
+        _set_form_label(
+            self._particle_form,
+            self._mass,
+            f"Mass ({label_for('mass', cfg)})",
+        )
+        _set_form_label(
+            self._uniform_form,
+            self._uniform_g_widget,
+            f"g ({label_for('accel', cfg)})",
+        )
+        _set_form_label(
+            self._nbody_form,
+            self._G,
+            f"G ({label_for('G', cfg)})",
+        )
+        _set_form_label(
+            self._rigid_form,
+            self._rb_size_widget,
+            f"Size ({label_for('length', cfg)})",
+        )
+        _set_form_label(
+            self._rigid_form,
+            self._rb_radius,
+            f"Radius ({label_for('length', cfg)})",
+        )
+        _set_form_label(
+            self._rigid_form,
+            self._rb_mass,
+            f"Mass ({label_for('mass', cfg)})",
+        )
+        _set_form_label(
+            self._rigid_form,
+            self._rb_pos_widget,
+            f"Position ({label_for('length', cfg)})",
+        )
+        _set_form_label(
+            self._rigid_form,
+            self._rb_vel_widget,
+            f"Velocity ({label_for('velocity', cfg)})",
+        )
+        _set_form_label(
+            self._rigid_form,
+            self._rb_omega_widget,
+            f"Omega body ({label_for('omega', cfg)})",
+        )
+        _set_form_label(
+            self._rigid_form,
+            self._rb_inertia_widget,
+            f"Inertia diag ({label_for('inertia', cfg)})",
+        )
+        self._rb_points_mass_label.setText(
+            f"Total Mass ({label_for('mass', cfg)})"
+        )
+        self._rb_points_com_label.setText(
+            f"CoM (body, {label_for('length', cfg)})"
+        )
+        self._rb_points_inertia_label.setText(
+            f"Inertia (body, {label_for('inertia', cfg)})"
+        )
+        self._rb_points_table.setHorizontalHeaderLabels(
+            [
+                f"mass ({label_for('mass', cfg)})",
+                f"x ({label_for('length', cfg)})",
+                f"y ({label_for('length', cfg)})",
+                f"z ({label_for('length', cfg)})",
+            ]
+        )
+        self._rb_forces_table.setHorizontalHeaderLabels(
+            [
+                "enabled",
+                "name",
+                "group",
+                "throttle",
+                f"fx (body, {label_for('force', cfg)})",
+                f"fy (body, {label_for('force', cfg)})",
+                f"fz (body, {label_for('force', cfg)})",
+                f"rx ({label_for('length', cfg)})",
+                f"ry ({label_for('length', cfg)})",
+                f"rz ({label_for('length', cfg)})",
+            ]
+        )
     def _set_enabled(self, enabled: bool) -> None:
         widgets = [
             *self._pos,
@@ -758,12 +874,21 @@ def _set_quat(
     fields[3].setValue(z)
 
 
-def _form_row(label: str, widget: QtWidgets.QWidget) -> QtWidgets.QHBoxLayout:
+def _form_row(label: str | QtWidgets.QLabel, widget: QtWidgets.QWidget) -> QtWidgets.QHBoxLayout:
     layout = QtWidgets.QHBoxLayout()
     layout.setContentsMargins(0, 0, 0, 0)
-    layout.addWidget(QtWidgets.QLabel(label))
+    label_widget = label if isinstance(label, QtWidgets.QLabel) else QtWidgets.QLabel(label)
+    layout.addWidget(label_widget)
     layout.addWidget(widget, 1)
     return layout
+
+
+def _set_form_label(
+    form: QtWidgets.QFormLayout, widget: QtWidgets.QWidget, text: str
+) -> None:
+    label = form.labelForField(widget)
+    if label is not None:
+        label.setText(text)
 
 
 def _build_visual_controls(parent: QtWidgets.QWidget) -> dict[str, object]:

@@ -1,0 +1,109 @@
+{
+  "entities": {
+    "particles": {
+      "mass": [
+        1.0,
+        3e-06
+      ],
+      "pos": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "vel": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.1027,
+          1000.0,
+          0.0
+        ]
+      ],
+      "visual": [
+        {
+          "color_tint": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "kind": "mesh",
+          "mesh_path": "E:/Space_App/Bean_Physics/models/sun.glb",
+          "offset_body": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation_body_quat": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1000000000.0,
+            1000000000.0,
+            1000000000.0
+          ]
+        },
+        {
+          "color_tint": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "kind": "mesh",
+          "mesh_path": "E:/Space_App/Bean_Physics/models/earth.glb",
+          "offset_body": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation_body_quat": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            10000000.0,
+            10000000.0,
+            10000000.0
+          ]
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "description": "Blank scenario.",
+    "name": "Untitled"
+  },
+  "models": [
+    {
+      "nbody_gravity": {
+        "G": 4433740.715065602,
+        "chunk_size": null,
+        "softening": 0.0
+      }
+    }
+  ],
+  "schema_version": 1,
+  "simulation": {
+    "dt": 1.1574074074074074e-08,
+    "integrator": "velocity_verlet",
+    "steps": 126315605520
+  },
+  "units": {
+    "enabled": true,
+    "preset": "ASTRO"
+  }
+}

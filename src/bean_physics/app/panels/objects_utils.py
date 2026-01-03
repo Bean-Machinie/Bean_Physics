@@ -16,6 +16,7 @@ from ...core.rigid_body.mass_properties import (
     sphere_inertia_body,
 )
 from ...io.scenario import ScenarioDefinition
+from ...io.units import config_from_defn, from_si, to_si
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +135,7 @@ def rigid_body_shapes(defn: ScenarioDefinition | None) -> list[dict[str, object]
     rigid = defn.get("entities", {}).get("rigid_bodies")
     if not rigid:
         return []
+    units_cfg = config_from_defn(defn)
     count = len(rigid.get("mass", []))
     shapes: list[dict[str, object]] = []
     for idx in range(count):
@@ -144,9 +146,11 @@ def rigid_body_shapes(defn: ScenarioDefinition | None) -> list[dict[str, object]
         kind = source.get("kind")
         params = source.get("params", {})
         if kind == "box":
-            shapes.append({"kind": "box", "size": params.get("size", [1.0, 1.0, 1.0])})
+            size = params.get("size", [1.0, 1.0, 1.0])
+            shapes.append({"kind": "box", "size": to_si(size, "length", units_cfg).tolist()})
         elif kind == "sphere":
-            shapes.append({"kind": "sphere", "radius": params.get("radius", 0.5)})
+            radius = params.get("radius", 0.5)
+            shapes.append({"kind": "sphere", "radius": float(to_si(radius, "length", units_cfg))})
         elif kind == "points":
             shapes.append({"kind": "sphere", "radius": 0.2})
         else:
@@ -160,12 +164,13 @@ def rigid_body_points_body(defn: ScenarioDefinition | None, index: int) -> np.nd
     rigid = defn.get("entities", {}).get("rigid_bodies")
     if not rigid:
         return np.zeros((0, 3), dtype=np.float64)
+    units_cfg = config_from_defn(defn)
     sources = rigid.get("source")
     if isinstance(sources, list) and index < len(sources):
         source = sources[index]
         if source.get("kind") == "points":
             points, _ = _points_from_source(source)
-            return points
+            return np.asarray(to_si(points, "length", units_cfg), dtype=np.float64)
     return np.zeros((0, 3), dtype=np.float64)
 
 
@@ -248,11 +253,12 @@ def set_rigid_body_force_points(
 
 
 def add_particle(defn: ScenarioDefinition) -> int:
+    units_cfg = config_from_defn(defn)
     entities = defn.setdefault("entities", {})
     particles = entities.setdefault("particles", {"pos": [], "vel": [], "mass": []})
     particles["pos"].append([0.0, 0.0, 0.0])
     particles["vel"].append([0.0, 0.0, 0.0])
-    particles["mass"].append(1.0)
+    particles["mass"].append(float(from_si(1.0, "mass", units_cfg)))
     if "visual" in particles:
         visuals = particles.setdefault("visual", [])
         visuals.append(None)
@@ -260,7 +266,9 @@ def add_particle(defn: ScenarioDefinition) -> int:
 
 
 def add_uniform_gravity(defn: ScenarioDefinition, g: Sequence[object]) -> int:
+    units_cfg = config_from_defn(defn)
     g_vals = _validate_vec3(g, "g")
+    g_vals = from_si(g_vals, "accel", units_cfg).tolist()
     models = defn.setdefault("models", [])
     models.append({"uniform_gravity": {"g": g_vals}})
     return len(models) - 1
@@ -272,7 +280,9 @@ def add_nbody_gravity(
     softening: object = 0.0,
     chunk_size: object | None = None,
 ) -> int:
+    units_cfg = config_from_defn(defn)
     G_val, softening_val, chunk_val = validate_nbody_fields(G, softening, chunk_size)
+    G_val = float(from_si(G_val, "G", units_cfg))
     models = defn.setdefault("models", [])
     models.append(
         {
@@ -292,14 +302,22 @@ def add_rigid_body_template(
     kind = kind.lower().strip()
     if kind not in {"box", "sphere", "points"}:
         raise ValueError("unsupported rigid body template")
+    units_cfg = config_from_defn(defn)
     params = params or {}
+    mass_val = float(from_si(1.0, "mass", units_cfg)) if kind != "points" else None
     if kind == "box":
-        size = params.get("size", [1.0, 1.0, 1.0])
-        inertia = box_inertia_body(1.0, np.asarray(size, dtype=np.float64))
+        if "size" in params:
+            size = params.get("size", [1.0, 1.0, 1.0])
+        else:
+            size = from_si([1.0, 1.0, 1.0], "length", units_cfg).tolist()
+        inertia = box_inertia_body(mass_val, np.asarray(size, dtype=np.float64))
         source_params = {"size": [float(v) for v in size]}
     elif kind == "sphere":
-        radius = float(params.get("radius", 0.5))
-        inertia = sphere_inertia_body(1.0, radius)
+        if "radius" in params:
+            radius = float(params.get("radius", 0.5))
+        else:
+            radius = float(from_si(0.5, "length", units_cfg))
+        inertia = sphere_inertia_body(mass_val, radius)
         source_params = {"radius": radius}
     else:
         points = params.get("points")
@@ -333,7 +351,7 @@ def add_rigid_body_template(
     rigid["vel"].append([0.0, 0.0, 0.0])
     rigid["quat"].append([1.0, 0.0, 0.0, 0.0])
     rigid["omega_body"].append([0.0, 0.0, 0.0])
-    rigid["mass"].append(1.0 if kind != "points" else float(total_mass))
+    rigid["mass"].append(mass_val if kind != "points" else float(total_mass))
     visuals = rigid.setdefault("visual", [])
     visuals.append(None)
 

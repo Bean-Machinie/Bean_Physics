@@ -18,6 +18,7 @@ from ..core.rigid_body.mass_properties import (
 )
 from ..core.math.quat import quat_to_rotmat
 from ..core.state import ParticlesState, RigidBodiesState, SystemState
+from .units import PRESETS, UnitsConfig, config_from_defn, to_si
 
 
 ScenarioDefinition = dict[str, Any]
@@ -39,7 +40,8 @@ def scenario_to_runtime(
     defn: ScenarioDefinition,
 ) -> tuple[SystemState, CompositeModel, object, float, int, dict[str, Any]]:
     sim = defn["simulation"]
-    dt = float(sim["dt"])
+    units_cfg = config_from_defn(defn)
+    dt = float(to_si(sim["dt"], "time", units_cfg))
     steps = int(sim["steps"])
     integrator_name = sim["integrator"]
     if integrator_name == "symplectic_euler":
@@ -56,19 +58,19 @@ def scenario_to_runtime(
         if "particles" in entities:
             p = entities["particles"]
             state.particles = ParticlesState(
-                pos=np.asarray(p["pos"], dtype=np.float64),
-                vel=np.asarray(p["vel"], dtype=np.float64),
-                mass=np.asarray(p["mass"], dtype=np.float64),
+                pos=np.asarray(to_si(p["pos"], "length", units_cfg), dtype=np.float64),
+                vel=np.asarray(to_si(p["vel"], "velocity", units_cfg), dtype=np.float64),
+                mass=np.asarray(to_si(p["mass"], "mass", units_cfg), dtype=np.float64),
             )
         if "rigid_bodies" in entities:
             r = entities["rigid_bodies"]
-            mass = np.asarray(r["mass"], dtype=np.float64)
-            inertia_body = _rigid_body_inertia(r, mass)
+            mass = np.asarray(to_si(r["mass"], "mass", units_cfg), dtype=np.float64)
+            inertia_body = _rigid_body_inertia(r, mass, units_cfg)
             state.rigid_bodies = RigidBodiesState(
-                pos=np.asarray(r["pos"], dtype=np.float64),
-                vel=np.asarray(r["vel"], dtype=np.float64),
+                pos=np.asarray(to_si(r["pos"], "length", units_cfg), dtype=np.float64),
+                vel=np.asarray(to_si(r["vel"], "velocity", units_cfg), dtype=np.float64),
                 quat=np.asarray(r["quat"], dtype=np.float64),
-                omega=np.asarray(r["omega_body"], dtype=np.float64),
+                omega=np.asarray(to_si(r["omega_body"], "omega", units_cfg), dtype=np.float64),
                 mass=mass,
                 inertia_body=inertia_body,
             )
@@ -76,13 +78,13 @@ def scenario_to_runtime(
     models = []
     for entry in defn.get("models", []):
         if "uniform_gravity" in entry:
-            g = np.asarray(entry["uniform_gravity"]["g"], dtype=np.float64)
+            g = np.asarray(to_si(entry["uniform_gravity"]["g"], "accel", units_cfg), dtype=np.float64)
             models.append(UniformGravity(g=g))
         elif "nbody_gravity" in entry:
             cfg = entry["nbody_gravity"]
             models.append(
                 NBodyGravity(
-                    G=float(cfg["G"]),
+                    G=float(to_si(cfg["G"], "G", units_cfg)),
                     softening=float(cfg.get("softening", 0.0)),
                     chunk_size=cfg.get("chunk_size"),
                 )
@@ -98,8 +100,11 @@ def scenario_to_runtime(
             )
             if forces:
                 body_index = np.array([f["body_index"] for f in forces], dtype=np.int64)
-                points_body = np.array([f["point_body"] for f in forces], dtype=np.float64)
-                forces_body = _resolve_force_body(forces, state)
+                points_body = np.array(
+                    to_si([f["point_body"] for f in forces], "length", units_cfg),
+                    dtype=np.float64,
+                )
+                forces_body = _resolve_force_body(forces, state, units_cfg)
             else:
                 body_index = np.zeros(0, dtype=np.int64)
                 points_body = np.zeros((0, 3), dtype=np.float64)
@@ -149,6 +154,17 @@ def _validate_scenario_v1(data: dict[str, Any]) -> ScenarioDefinition:
         every = data["sampling"].get("every")
         if every is not None and every <= 0:
             raise ValueError("sampling.every must be > 0")
+
+    if "units" in data:
+        units = data["units"]
+        if not isinstance(units, dict):
+            raise ValueError("units must be an object")
+        preset = str(units.get("preset", "SI"))
+        preset_upper = preset.upper()
+        if preset_upper not in PRESETS:
+            raise ValueError("units.preset is not supported")
+        if "enabled" in units and not isinstance(units["enabled"], bool):
+            raise ValueError("units.enabled must be boolean")
 
     entities = data.get("entities", {})
     if "particles" in entities:
@@ -304,7 +320,7 @@ def _validate_visual_block(entry: dict[str, Any], ctx: str) -> None:
 
 
 def _resolve_force_body(
-    forces: list[dict[str, Any]], state: SystemState
+    forces: list[dict[str, Any]], state: SystemState, units_cfg: UnitsConfig
 ) -> np.ndarray:
     forces_body = []
     if state.rigid_bodies is None:
@@ -313,23 +329,26 @@ def _resolve_force_body(
     for force in forces:
         throttle = float(force.get("throttle", 1.0))
         if "force_body" in force:
-            base = np.asarray(force["force_body"], dtype=np.float64)
+            base = np.asarray(to_si(force["force_body"], "force", units_cfg), dtype=np.float64)
         else:
             body_idx = int(force["body_index"])
-            f_world = np.asarray(force["force_world"], dtype=np.float64)
+            f_world = np.asarray(to_si(force["force_world"], "force", units_cfg), dtype=np.float64)
             r = rot[body_idx]
             base = r.T @ f_world
         forces_body.append((throttle * base).tolist())
     return np.asarray(forces_body, dtype=np.float64)
 
 
-def _rigid_body_inertia(rigid: dict[str, Any], mass: np.ndarray) -> np.ndarray:
+def _rigid_body_inertia(
+    rigid: dict[str, Any], mass: np.ndarray, units_cfg: UnitsConfig
+) -> np.ndarray:
     if mass.shape[0] == 0:
         return np.zeros((0, 3, 3), dtype=np.float64)
     mass_dist = rigid["mass_distribution"]
     inertia = mass_dist.get("inertia_body")
     if inertia is not None:
         inertia_arr = np.asarray(inertia, dtype=np.float64)
+        inertia_arr = np.asarray(to_si(inertia_arr, "inertia", units_cfg), dtype=np.float64)
         if inertia_arr.ndim == 2:
             return np.broadcast_to(inertia_arr, (mass.shape[0], 3, 3)).copy()
         if inertia_arr.ndim == 3:
@@ -344,18 +363,31 @@ def _rigid_body_inertia(rigid: dict[str, Any], mass: np.ndarray) -> np.ndarray:
             params = src.get("params", {})
             if kind == "box":
                 inertia_list.append(
-                    box_inertia_body(mass[idx], np.asarray(params.get("size"), dtype=np.float64))
+                    box_inertia_body(
+                        mass[idx],
+                        np.asarray(
+                            to_si(params.get("size"), "length", units_cfg),
+                            dtype=np.float64,
+                        ),
+                    )
                 )
             elif kind == "sphere":
                 inertia_list.append(
-                    sphere_inertia_body(mass[idx], float(params.get("radius")))
+                    sphere_inertia_body(
+                        mass[idx],
+                        float(to_si(params.get("radius"), "length", units_cfg)),
+                    )
                 )
             elif kind == "points":
                 points = src.get("points")
                 if points is None:
                     points = params.get("points", [])
-                positions = np.asarray([p["pos"] for p in points], dtype=np.float64)
-                masses = np.asarray([p["mass"] for p in points], dtype=np.float64)
+                positions = np.asarray(
+                    to_si([p["pos"] for p in points], "length", units_cfg), dtype=np.float64
+                )
+                masses = np.asarray(
+                    to_si([p["mass"] for p in points], "mass", units_cfg), dtype=np.float64
+                )
                 total_mass, _, inertia = rigid_body_from_points(positions, masses)
                 if not np.isclose(total_mass, float(mass[idx])):
                     raise ValueError("rigid_bodies.mass must match sum of source points mass")
@@ -364,8 +396,8 @@ def _rigid_body_inertia(rigid: dict[str, Any], mass: np.ndarray) -> np.ndarray:
                 raise ValueError("unsupported rigid body source kind")
         return np.stack(inertia_list, axis=0)
 
-    points_body = np.asarray(mass_dist["points_body"], dtype=np.float64)
-    point_masses = np.asarray(mass_dist["point_masses"], dtype=np.float64)
+    points_body = np.asarray(to_si(mass_dist["points_body"], "length", units_cfg), dtype=np.float64)
+    point_masses = np.asarray(to_si(mass_dist["point_masses"], "mass", units_cfg), dtype=np.float64)
     total_mass, _, inertia = mass_properties(points_body, point_masses)
     mass_sum = float(np.sum(mass))
     if mass.shape[0] > 0 and not np.isclose(mass_sum / mass.shape[0], total_mass):

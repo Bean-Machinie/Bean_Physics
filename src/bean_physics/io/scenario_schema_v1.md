@@ -5,6 +5,9 @@ This schema defines a declarative JSON format for reproducible simulations.
 ## Top-level fields
 
 - `schema_version` (int, required): must be `1`.
+- `units` (object, optional):
+  - `preset` (string): `"SI"`, `"KM"`, or `"ASTRO"`
+  - `enabled` (bool): when `false`, values are treated as SI without conversion
 - `metadata` (object, optional):
   - `name` (string, optional)
   - `description` (string, optional)
@@ -80,3 +83,5 @@ orientation on load).
 
 - Scenario data is declarative; runtime objects are built by adapters.
 - All arrays are interpreted as float64.
+- Runtime physics always operate in SI units (m, kg, s); scenario values are stored
+  in the selected preset units when `units.enabled` is true.

@@ -37,6 +37,7 @@ from .panels.objects_utils import (
 )
 from .inspector import ObjectInspector
 from .recording_utils import build_metadata, make_recording_paths, video_filename
+from ..io.units import UnitsConfig, config_from_defn, convert_definition_units, preset_names, to_si
 from ..core.math.quat import quat_to_rotmat
 
 
@@ -47,6 +48,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._controller = SimulationController()
         self._session = ScenarioSession()
+        self._units_cfg = UnitsConfig(preset="SI", enabled=True)
+        self._units_syncing = False
+        self._duration_syncing = False
         self._running = False
         self._substeps_per_tick = 1
         self._timer = QtCore.QTimer(self)
@@ -79,6 +83,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_docks()
         self._build_toolbar()
         self._build_menus()
+        self._sync_units_from_defn()
+        self._sync_duration_controls()
         self._update_window_title()
         self.statusBar().showMessage("Ready")
 
@@ -161,6 +167,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self._steps_spin.valueChanged.connect(self._on_steps_per_frame_changed)
         self._toolbar.addWidget(self._steps_spin)
 
+        duration_label = QtWidgets.QLabel("Duration")
+        duration_label.setContentsMargins(6, 0, 6, 0)
+        self._toolbar.addWidget(duration_label)
+        self._duration_spin = QtWidgets.QDoubleSpinBox(self)
+        self._duration_spin.setRange(0.0, 1e12)
+        self._duration_spin.setDecimals(4)
+        self._duration_spin.setSingleStep(1.0)
+        self._duration_spin.valueChanged.connect(self._on_duration_changed)
+        self._toolbar.addWidget(self._duration_spin)
+        self._duration_unit = QtWidgets.QComboBox(self)
+        self._duration_unit.addItem("s", 1.0)
+        self._duration_unit.addItem("min", 60.0)
+        self._duration_unit.addItem("hour", 3600.0)
+        self._duration_unit.addItem("day", 86400.0)
+        self._duration_unit.addItem("year", 31557600.0)
+        self._duration_unit.currentIndexChanged.connect(self._on_duration_unit_changed)
+        self._toolbar.addWidget(self._duration_unit)
+
         self._toolbar.addSeparator()
 
         self._action_run = QtGui.QAction("Run", self)
@@ -182,6 +206,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self._action_reset.setEnabled(False)
         self._action_reset.triggered.connect(self._on_reset)
         self._toolbar.addAction(self._action_reset)
+
+        self._toolbar.addSeparator()
+        units_label = QtWidgets.QLabel("Units")
+        units_label.setContentsMargins(6, 0, 6, 0)
+        self._toolbar.addWidget(units_label)
+        self._units_combo = QtWidgets.QComboBox(self)
+        for name in preset_names():
+            self._units_combo.addItem(name, name)
+        self._units_combo.currentIndexChanged.connect(self._on_units_changed)
+        self._toolbar.addWidget(self._units_combo)
+        self._units_enabled = QtWidgets.QCheckBox("Enabled", self)
+        self._units_enabled.setChecked(True)
+        self._units_enabled.toggled.connect(self._on_units_enabled)
+        self._toolbar.addWidget(self._units_enabled)
+        self._units_reset = QtWidgets.QToolButton(self)
+        self._units_reset.setText("Reset SI")
+        self._units_reset.clicked.connect(self._on_units_reset)
+        self._toolbar.addWidget(self._units_reset)
 
     def _build_docks(self) -> None:
         objects = QtWidgets.QDockWidget("Objects", self)
@@ -231,12 +273,82 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 self._toolbar.addWidget(menu_bar)
 
+    def _sync_units_from_defn(self) -> None:
+        if self._session.scenario_def is None:
+            cfg = UnitsConfig(preset="SI", enabled=True)
+        else:
+            cfg = config_from_defn(self._session.scenario_def)
+            self._session.scenario_def.setdefault(
+                "units", {"preset": cfg.preset, "enabled": cfg.enabled}
+            )
+        self._units_cfg = cfg
+        if not hasattr(self, "_units_combo"):
+            return
+        self._units_syncing = True
+        try:
+            idx = self._units_combo.findData(cfg.preset)
+            if idx >= 0:
+                self._units_combo.setCurrentIndex(idx)
+            self._units_enabled.setChecked(cfg.enabled)
+        finally:
+            self._units_syncing = False
+        self._inspector.set_units(cfg)
+
+    def _apply_units_change(self, new_cfg: UnitsConfig) -> None:
+        if self._session.scenario_def is None:
+            self._units_cfg = new_cfg
+            return
+        if new_cfg == self._units_cfg:
+            return
+        convert_definition_units(self._session.scenario_def, self._units_cfg, new_cfg)
+        self._units_cfg = new_cfg
+        self._session.mark_dirty()
+        self._controller.load_definition(self._session.scenario_def)
+        self._controller.scenario_path = self._session.scenario_path
+        self._apply_state_to_viewport()
+        self._refresh_objects_panel()
+        self._inspector.set_units(new_cfg)
+        self._inspector.refresh()
+        self._sync_duration_controls()
+
+    def _on_units_changed(self, *_: object) -> None:
+        if self._units_syncing:
+            return
+        preset = self._units_combo.currentData()
+        enabled = self._units_enabled.isChecked()
+        if preset is None:
+            return
+        self._apply_units_change(UnitsConfig(preset=preset, enabled=enabled))
+
+    def _on_units_enabled(self, enabled: bool) -> None:
+        if self._units_syncing:
+            return
+        preset = self._units_combo.currentData()
+        if preset is None:
+            return
+        self._apply_units_change(UnitsConfig(preset=preset, enabled=enabled))
+
+    def _on_units_reset(self) -> None:
+        if not hasattr(self, "_units_combo"):
+            return
+        self._units_syncing = True
+        try:
+            idx = self._units_combo.findData("SI")
+            if idx >= 0:
+                self._units_combo.setCurrentIndex(idx)
+            self._units_enabled.setChecked(True)
+        finally:
+            self._units_syncing = False
+        self._apply_units_change(UnitsConfig(preset="SI", enabled=True))
+
     def _on_new(self) -> None:
         if not self._confirm_discard_if_dirty():
             return
         self._session.scenario_def = self._session.new_default()
         self._session.scenario_path = None
         self._session.is_dirty = True
+        self._sync_units_from_defn()
+        self._sync_duration_controls()
         self._controller.load_definition(self._session.scenario_def)
         self._controller.scenario_path = None
         self._running = False
@@ -266,6 +378,8 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self._session.load(path)
             if self._session.scenario_def is not None:
+                self._sync_units_from_defn()
+                self._sync_duration_controls()
                 self._controller.load_definition(self._session.scenario_def)
                 self._controller.scenario_path = self._session.scenario_path
         except Exception as exc:  # pragma: no cover - Qt error path
@@ -359,6 +473,69 @@ class MainWindow(QtWidgets.QMainWindow):
         self._substeps_per_tick = value
         self._update_status()
 
+    def _duration_unit_seconds(self) -> float:
+        if not hasattr(self, "_duration_unit"):
+            return 1.0
+        value = self._duration_unit.currentData()
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 1.0
+
+    def _sync_duration_controls(self) -> None:
+        if not hasattr(self, "_duration_spin"):
+            return
+        if self._session.scenario_def is None:
+            self._duration_syncing = True
+            try:
+                self._duration_spin.setValue(0.0)
+                self._duration_spin.setEnabled(False)
+                self._duration_unit.setEnabled(False)
+            finally:
+                self._duration_syncing = False
+            return
+        sim = self._session.scenario_def.get("simulation", {})
+        dt = float(sim.get("dt", 0.0))
+        steps = int(sim.get("steps", 0))
+        dt_si = float(to_si(dt, "time", self._units_cfg))
+        duration_si = dt_si * steps
+        unit_seconds = self._duration_unit_seconds()
+        self._duration_syncing = True
+        try:
+            self._duration_spin.setEnabled(True)
+            self._duration_unit.setEnabled(True)
+            if unit_seconds > 0:
+                self._duration_spin.setValue(duration_si / unit_seconds)
+            else:
+                self._duration_spin.setValue(duration_si)
+        finally:
+            self._duration_syncing = False
+
+    def _on_duration_changed(self, *_: object) -> None:
+        if self._duration_syncing:
+            return
+        if self._session.scenario_def is None:
+            return
+        sim = self._session.scenario_def.get("simulation", {})
+        dt = float(sim.get("dt", 0.0))
+        if dt <= 0.0:
+            return
+        dt_si = float(to_si(dt, "time", self._units_cfg))
+        duration_seconds = float(self._duration_spin.value()) * self._duration_unit_seconds()
+        steps = int(round(duration_seconds / dt_si)) if dt_si > 0 else 0
+        sim["steps"] = max(0, steps)
+        self._session.mark_dirty()
+        self._controller.load_definition(self._session.scenario_def)
+        self._controller.scenario_path = self._session.scenario_path
+        self._running = False
+        self._apply_state_to_viewport()
+        self._update_action_state()
+
+    def _on_duration_unit_changed(self, *_: object) -> None:
+        if self._duration_syncing:
+            return
+        self._sync_duration_controls()
+
     def _apply_state_to_viewport(self) -> None:
         self._viewport.set_particles(self._controller.particle_positions())
         self._viewport.set_particle_visuals(
@@ -402,6 +579,7 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> dict[str, object] | None:
         if visual is None:
             return None
+        units_cfg = config_from_defn(self._session.scenario_def or {})
         if visual.get("kind") != "mesh":
             return None
         mesh_path = visual.get("mesh_path")
@@ -414,7 +592,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(f"Mesh not found: {resolved}")
             return {
                 "scale": visual.get("scale", [1.0, 1.0, 1.0]),
-                "offset_body": visual.get("offset_body", [0.0, 0.0, 0.0]),
+                "offset_body": to_si(
+                    visual.get("offset_body", [0.0, 0.0, 0.0]),
+                    "length",
+                    units_cfg,
+                ).tolist(),
                 "rotation_body_quat": visual.get(
                     "rotation_body_quat", [1.0, 0.0, 0.0, 0.0]
                 ),
@@ -425,7 +607,11 @@ class MainWindow(QtWidgets.QMainWindow):
         return {
             "mesh_path": str(resolved),
             "scale": visual.get("scale", [1.0, 1.0, 1.0]),
-            "offset_body": visual.get("offset_body", [0.0, 0.0, 0.0]),
+            "offset_body": to_si(
+                visual.get("offset_body", [0.0, 0.0, 0.0]),
+                "length",
+                units_cfg,
+            ).tolist(),
             "rotation_body_quat": visual.get(
                 "rotation_body_quat", [1.0, 0.0, 0.0, 0.0]
             ),

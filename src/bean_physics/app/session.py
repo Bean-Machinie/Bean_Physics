@@ -23,6 +23,10 @@ class ScenarioSession:
                 "name": "Untitled",
                 "description": "Blank scenario.",
             },
+            "units": {
+                "preset": "SI",
+                "enabled": True,
+            },
             "simulation": {
                 "dt": 0.001,
                 "steps": 10000,
