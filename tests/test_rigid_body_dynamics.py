@@ -32,7 +32,7 @@ def test_force_at_com_no_torque() -> None:
     model = RigidBodyForces(mass=np.array([2.0]), inertia_body=np.eye(3))
     model.set_applied_forces(
         body_index=np.array([0]),
-        forces_world=np.array([[2.0, 4.0, 6.0]], dtype=np.float64),
+        forces_body=np.array([[2.0, 4.0, 6.0]], dtype=np.float64),
         points_body=np.array([[0.0, 0.0, 0.0]], dtype=np.float64),
     )
 
@@ -47,7 +47,7 @@ def test_equal_opposite_forces_pure_torque() -> None:
     model = RigidBodyForces(mass=np.array([1.0]), inertia_body=np.eye(3))
     model.set_applied_forces(
         body_index=np.array([0, 0]),
-        forces_world=np.array([[0.0, 1.0, 0.0], [0.0, -1.0, 0.0]], dtype=np.float64),
+        forces_body=np.array([[0.0, 1.0, 0.0], [0.0, -1.0, 0.0]], dtype=np.float64),
         points_body=np.array([[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]], dtype=np.float64),
     )
 
@@ -64,7 +64,7 @@ def test_torque_free_angular_momentum_magnitude() -> None:
     model = RigidBodyForces(mass=np.array([1.0]), inertia_body=inertia)
     model.set_applied_forces(
         body_index=np.array([], dtype=np.int64),
-        forces_world=np.zeros((0, 3), dtype=np.float64),
+        forces_body=np.zeros((0, 3), dtype=np.float64),
         points_body=np.zeros((0, 3), dtype=np.float64),
     )
 
@@ -119,3 +119,58 @@ def test_torque_free_spin_stable_quat_norm() -> None:
         integrator.step(state, model, dt)
     q_norm = float(np.linalg.norm(state.rigid_bodies.quat[0]))
     assert abs(q_norm - 1.0) < 1e-4
+
+
+def test_offcenter_force_spins_up() -> None:
+    state = _make_state(omega_body=np.zeros((1, 3), dtype=np.float64))
+    inertia = np.array([[[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]]])
+    model = RigidBodyForces(mass=np.array([1.0]), inertia_body=inertia)
+    model.set_applied_forces(
+        body_index=np.array([0], dtype=np.int64),
+        forces_body=np.array([[0.0, 1.0, 0.0]], dtype=np.float64),
+        points_body=np.array([[1.0, 0.0, 0.0]], dtype=np.float64),
+    )
+    integrator = VelocityVerlet()
+    dt = 1e-3
+    for _ in range(1000):
+        integrator.step(state, model, dt)
+    assert np.linalg.norm(state.rigid_bodies.omega[0]) > 0.0
+
+
+def test_rigid_body_force_determinism() -> None:
+    state_a = _make_state(omega_body=np.zeros((1, 3), dtype=np.float64))
+    state_b = _make_state(omega_body=np.zeros((1, 3), dtype=np.float64))
+    inertia = np.array([[[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]]])
+    model = RigidBodyForces(mass=np.array([1.0]), inertia_body=inertia)
+    model.set_applied_forces(
+        body_index=np.array([0], dtype=np.int64),
+        forces_body=np.array([[0.5, 0.0, 0.0]], dtype=np.float64),
+        points_body=np.array([[0.0, 1.0, 0.0]], dtype=np.float64),
+    )
+    integrator = VelocityVerlet()
+    dt = 1e-3
+    for _ in range(500):
+        integrator.step(state_a, model, dt)
+        integrator.step(state_b, model, dt)
+    assert np.array_equal(state_a.rigid_bodies.pos, state_b.rigid_bodies.pos)
+    assert np.array_equal(state_a.rigid_bodies.vel, state_b.rigid_bodies.vel)
+    assert np.array_equal(state_a.rigid_bodies.quat, state_b.rigid_bodies.quat)
+    assert np.array_equal(state_a.rigid_bodies.omega, state_b.rigid_bodies.omega)
+
+
+def test_force_couple_spins_monotonic() -> None:
+    state = _make_state(omega_body=np.zeros((1, 3), dtype=np.float64))
+    inertia = np.array([[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]])
+    model = RigidBodyForces(mass=np.array([1.0]), inertia_body=inertia)
+    model.set_applied_forces(
+        body_index=np.array([0, 0], dtype=np.int64),
+        forces_body=np.array([[0.0, 1.0, 0.0], [0.0, -1.0, 0.0]], dtype=np.float64),
+        points_body=np.array([[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]], dtype=np.float64),
+    )
+    integrator = VelocityVerlet()
+    dt = 1e-3
+    omega_z = []
+    for _ in range(50):
+        integrator.step(state, model, dt)
+        omega_z.append(state.rigid_bodies.omega[0, 2])
+    assert all(omega_z[i] <= omega_z[i + 1] + 1e-12 for i in range(len(omega_z) - 1))

@@ -15,7 +15,9 @@ from .panels.objects_utils import (
     apply_uniform_gravity,
     force_summary,
     particle_summary,
+    rigid_body_force_points,
     rigid_body_summary,
+    set_rigid_body_force_points,
 )
 from ..core.rigid_body.mass_properties import rigid_body_from_points, shift_points_to_com
 
@@ -141,6 +143,32 @@ class ObjectInspector(QtWidgets.QDialog):
         rigid_form.addRow("Quat (w,x,y,z)", _vector_widget(self._rb_quat))
         rigid_form.addRow("Omega body", _vector_widget(self._rb_omega))
         rigid_form.addRow("Inertia diag", _vector_widget(self._rb_inertia))
+        self._rb_forces_widget = QtWidgets.QWidget(self)
+        forces_layout = QtWidgets.QVBoxLayout(self._rb_forces_widget)
+        forces_layout.setContentsMargins(0, 0, 0, 0)
+        self._rb_forces_table = QtWidgets.QTableWidget(0, 7, self)
+        self._rb_forces_table.setHorizontalHeaderLabels(
+            ["enabled", "fx (body)", "fy (body)", "fz (body)", "rx", "ry", "rz"]
+        )
+        self._rb_forces_table.horizontalHeader().setStretchLastSection(True)
+        self._rb_forces_table.verticalHeader().setVisible(False)
+        self._rb_forces_table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self._rb_forces_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
+        forces_layout.addWidget(self._rb_forces_table)
+        forces_buttons = QtWidgets.QHBoxLayout()
+        self._rb_forces_add = QtWidgets.QPushButton("Add Force", self)
+        self._rb_forces_remove = QtWidgets.QPushButton("Remove Selected", self)
+        self._rb_forces_add.clicked.connect(self._on_add_force)
+        self._rb_forces_remove.clicked.connect(self._on_remove_force)
+        forces_buttons.addWidget(self._rb_forces_add)
+        forces_buttons.addWidget(self._rb_forces_remove)
+        forces_buttons.addStretch(1)
+        forces_layout.addLayout(forces_buttons)
+        rigid_form.addRow("Force Points", self._rb_forces_widget)
         rigid_form.addRow("Points", self._rb_points_widget)
         self._stack.addWidget(self._rigid_page)
 
@@ -214,6 +242,9 @@ class ObjectInspector(QtWidgets.QDialog):
             inertia = summary["inertia_body"]
             inertia_diag = np.diag(inertia)
             _set_vector(self._rb_inertia, inertia_diag[0], inertia_diag[1], inertia_diag[2])
+            self._load_force_table(
+                rigid_body_force_points(self._defn, self._obj.index)
+            )
             if kind == "points":
                 points = source.get("points")
                 if points is None:
@@ -253,6 +284,9 @@ class ObjectInspector(QtWidgets.QDialog):
             self._rb_points_recenter,
             self._rb_points_mass,
             *self._rb_points_com,
+            self._rb_forces_table,
+            self._rb_forces_add,
+            self._rb_forces_remove,
         ]
         for row in self._rb_points_inertia:
             widgets.extend(row)
@@ -308,6 +342,8 @@ class ObjectInspector(QtWidgets.QDialog):
                     self._quat_values(self._rb_quat),
                     self._vector_values(self._rb_omega),
                 )
+                forces = self._forces_from_table()
+                set_rigid_body_force_points(self._defn, self._obj.index, forces)
             else:
                 return
         except Exception as exc:  # pragma: no cover - Qt error path
@@ -418,6 +454,64 @@ class ObjectInspector(QtWidgets.QDialog):
         finally:
             self._updating_points = False
         self._update_points_derived()
+
+    def _load_force_table(self, forces: list[dict[str, object]]) -> None:
+        self._rb_forces_table.setRowCount(0)
+        for force in forces:
+            self._append_force_row(
+                force.get("enabled", True),
+                force.get("force_body", force.get("force_world", [0.0, 0.0, 0.0])),
+                force.get("point_body", [0.0, 0.0, 0.0]),
+            )
+
+    def _append_force_row(
+        self, enabled: object, force_body: object, point_body: object
+    ) -> None:
+        row = self._rb_forces_table.rowCount()
+        self._rb_forces_table.insertRow(row)
+        enabled_item = QtWidgets.QTableWidgetItem()
+        enabled_item.setFlags(enabled_item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+        enabled_item.setCheckState(
+            QtCore.Qt.CheckState.Checked if bool(enabled) else QtCore.Qt.CheckState.Unchecked
+        )
+        self._rb_forces_table.setItem(row, 0, enabled_item)
+        entries = [*force_body, *point_body]
+        for col, value in enumerate(entries, start=1):
+            item = QtWidgets.QTableWidgetItem(str(value))
+            self._rb_forces_table.setItem(row, col, item)
+
+    def _forces_from_table(self) -> list[dict[str, object]]:
+        forces = []
+        for row in range(self._rb_forces_table.rowCount()):
+            enabled_item = self._rb_forces_table.item(row, 0)
+            enabled = True if enabled_item is None else enabled_item.checkState() == QtCore.Qt.CheckState.Checked
+            values = []
+            for col in range(1, 7):
+                item = self._rb_forces_table.item(row, col)
+                if item is None:
+                    values.append(0.0)
+                else:
+                    values.append(float(item.text()))
+            force_body = values[:3]
+            point_body = values[3:]
+            forces.append(
+                {
+                    "body_index": self._obj.index if self._obj is not None else 0,
+                    "force_body": force_body,
+                    "point_body": point_body,
+                    "enabled": enabled,
+                }
+            )
+        return forces
+
+    def _on_add_force(self) -> None:
+        self._append_force_row(True, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+
+    def _on_remove_force(self) -> None:
+        row = self._rb_forces_table.currentRow()
+        if row < 0:
+            return
+        self._rb_forces_table.removeRow(row)
 
     @staticmethod
     def _vector_values(fields: Sequence[QtWidgets.QDoubleSpinBox]) -> list[float]:

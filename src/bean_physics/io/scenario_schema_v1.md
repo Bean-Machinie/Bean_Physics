@@ -49,7 +49,12 @@ This schema defines a declarative JSON format for reproducible simulations.
   - `forces` (array of objects):
     - `body_index` (int)
     - `point_body` (array[3]) point in body coordinates relative to CoM
-    - `force_world` (array[3]) force in world coordinates
+    - `force_body` (array[3]) force in body coordinates
+    - `enabled` (bool, optional; defaults true)
+
+Legacy note: older scenarios may use `force_world`. These are interpreted as
+body-fixed thrusters aligned with the body at t=0 (converted using the initial
+orientation on load).
 
 ## Notes
 

@@ -6,6 +6,8 @@ from pathlib import Path
 import numpy as np
 
 from bean_physics.core.diagnostics import linear_momentum
+from bean_physics.core.forces import RigidBodyForces
+from bean_physics.core.math.quat import quat_to_rotmat
 from bean_physics.core.run import run
 from bean_physics.io import load_scenario, save_scenario, scenario_to_runtime
 
@@ -79,6 +81,49 @@ def test_round_trip_rigid_body_points(tmp_path: Path) -> None:
     save_scenario(out, defn)
     defn2 = load_scenario(out)
     assert _scenario_equal(defn, defn2)
+
+
+def test_force_world_migrates_to_body() -> None:
+    angle = np.pi / 2.0
+    q = [np.cos(angle / 2.0), 0.0, 0.0, np.sin(angle / 2.0)]
+    defn = {
+        "schema_version": 1,
+        "simulation": {"dt": 0.01, "steps": 1, "integrator": "velocity_verlet"},
+        "entities": {
+            "rigid_bodies": {
+                "pos": [[0.0, 0.0, 0.0]],
+                "vel": [[0.0, 0.0, 0.0]],
+                "quat": [q],
+                "omega_body": [[0.0, 0.0, 0.0]],
+                "mass": [1.0],
+                "mass_distribution": {
+                    "points_body": [[0.0, 0.0, 0.0]],
+                    "point_masses": [1.0],
+                    "inertia_body": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                },
+            }
+        },
+        "models": [
+            {
+                "rigid_body_forces": {
+                    "forces": [
+                        {
+                            "body_index": 0,
+                            "point_body": [1.0, 0.0, 0.0],
+                            "force_world": [0.0, 1.0, 0.0],
+                        }
+                    ]
+                }
+            }
+        ],
+    }
+    state, model, _, _, _, _ = scenario_to_runtime(defn)
+    rb_models = [m for m in getattr(model, "models", []) if isinstance(m, RigidBodyForces)]
+    assert rb_models
+    rb_model = rb_models[0]
+    rot = quat_to_rotmat(np.asarray(state.rigid_bodies.quat))
+    expected = rot[0].T @ np.asarray([0.0, 1.0, 0.0])
+    assert np.allclose(rb_model.forces_body[0], expected)
 
 
 def test_determinism_two_body() -> None:

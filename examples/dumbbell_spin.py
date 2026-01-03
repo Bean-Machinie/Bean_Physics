@@ -34,7 +34,7 @@ if __name__ == "__main__":
     model = RigidBodyForces(mass=np.array([total_mass]), inertia_body=inertia_body)
     model.set_applied_forces(
         body_index=np.array([], dtype=np.int64),
-        forces_world=np.zeros((0, 3), dtype=np.float64),
+        forces_body=np.zeros((0, 3), dtype=np.float64),
         points_body=np.zeros((0, 3), dtype=np.float64),
     )
 

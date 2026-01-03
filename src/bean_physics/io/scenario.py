@@ -16,6 +16,7 @@ from ..core.rigid_body.mass_properties import (
     rigid_body_from_points,
     sphere_inertia_body,
 )
+from ..core.math.quat import quat_to_rotmat
 from ..core.state import ParticlesState, RigidBodiesState, SystemState
 
 
@@ -90,14 +91,20 @@ def scenario_to_runtime(
             if state.rigid_bodies is None or inertia_body is None:
                 raise ValueError("rigid_body_forces requires rigid bodies and inertia")
             forces = entry["rigid_body_forces"].get("forces", [])
+            forces = [f for f in forces if f.get("enabled", True)]
             rb_model = RigidBodyForces(
                 mass=state.rigid_bodies.mass,
                 inertia_body=inertia_body,
             )
-            body_index = np.array([f["body_index"] for f in forces], dtype=np.int64)
-            forces_world = np.array([f["force_world"] for f in forces], dtype=np.float64)
-            points_body = np.array([f["point_body"] for f in forces], dtype=np.float64)
-            rb_model.set_applied_forces(body_index, forces_world, points_body)
+            if forces:
+                body_index = np.array([f["body_index"] for f in forces], dtype=np.int64)
+                points_body = np.array([f["point_body"] for f in forces], dtype=np.float64)
+                forces_body = _resolve_force_body(forces, state)
+            else:
+                body_index = np.zeros(0, dtype=np.int64)
+                points_body = np.zeros((0, 3), dtype=np.float64)
+                forces_body = np.zeros((0, 3), dtype=np.float64)
+            rb_model.set_applied_forces(body_index, forces_body, points_body)
             models.append(rb_model)
         else:
             raise ValueError(f"unknown model entry: {entry}")
@@ -238,14 +245,41 @@ def _validate_scenario_v1(data: dict[str, Any]) -> ScenarioDefinition:
         elif key == "rigid_body_forces":
             forces = cfg.get("forces", [])
             for f in forces:
-                for req in ("body_index", "point_body", "force_world"):
+                for req in ("body_index", "point_body"):
                     _require(f, req, "models.rigid_body_forces.forces")
-                if len(f["point_body"]) != 3 or len(f["force_world"]) != 3:
+                if "force_body" not in f and "force_world" not in f:
+                    raise ValueError("rigid_body_forces entries must include force_body or force_world")
+                if len(f["point_body"]) != 3:
                     raise ValueError("rigid_body_forces entries must use length-3 vectors")
+                if "force_body" in f and len(f["force_body"]) != 3:
+                    raise ValueError("rigid_body_forces.force_body must have length 3")
+                if "force_world" in f and len(f["force_world"]) != 3:
+                    raise ValueError("rigid_body_forces.force_world must have length 3")
+                if "enabled" in f and not isinstance(f["enabled"], bool):
+                    raise ValueError("rigid_body_forces.enabled must be boolean")
         else:
             raise ValueError(f"unknown model type: {key}")
 
     return data
+
+
+def _resolve_force_body(
+    forces: list[dict[str, Any]], state: SystemState
+) -> np.ndarray:
+    forces_body = []
+    if state.rigid_bodies is None:
+        return np.zeros((0, 3), dtype=np.float64)
+    rot = quat_to_rotmat(state.rigid_bodies.quat)
+    for force in forces:
+        if "force_body" in force:
+            forces_body.append(force["force_body"])
+        else:
+            body_idx = int(force["body_index"])
+            f_world = np.asarray(force["force_world"], dtype=np.float64)
+            r = rot[body_idx]
+            f_body = r.T @ f_world
+            forces_body.append(f_body.tolist())
+    return np.asarray(forces_body, dtype=np.float64)
 
 
 def _rigid_body_inertia(rigid: dict[str, Any], mass: np.ndarray) -> np.ndarray:

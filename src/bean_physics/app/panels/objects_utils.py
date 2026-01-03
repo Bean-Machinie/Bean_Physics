@@ -169,6 +169,40 @@ def rigid_body_points_body(defn: ScenarioDefinition | None, index: int) -> np.nd
     return np.zeros((0, 3), dtype=np.float64)
 
 
+def rigid_body_force_points(
+    defn: ScenarioDefinition, body_index: int
+) -> list[dict[str, object]]:
+    models = defn.get("models", [])
+    for entry in models:
+        if "rigid_body_forces" in entry:
+            forces = entry["rigid_body_forces"].get("forces", [])
+            return [
+                f
+                for f in forces
+                if int(f.get("body_index", -1)) == body_index
+            ]
+    return []
+
+
+def set_rigid_body_force_points(
+    defn: ScenarioDefinition,
+    body_index: int,
+    forces: list[dict[str, object]],
+) -> None:
+    models = defn.setdefault("models", [])
+    entry = None
+    for model in models:
+        if "rigid_body_forces" in model:
+            entry = model
+            break
+    if entry is None:
+        entry = {"rigid_body_forces": {"forces": []}}
+        models.append(entry)
+    existing = entry["rigid_body_forces"].get("forces", [])
+    kept = [f for f in existing if int(f.get("body_index", -1)) != body_index]
+    entry["rigid_body_forces"]["forces"] = kept + forces
+
+
 def add_particle(defn: ScenarioDefinition) -> int:
     entities = defn.setdefault("entities", {})
     particles = entities.setdefault("particles", {"pos": [], "vel": [], "mass": []})
