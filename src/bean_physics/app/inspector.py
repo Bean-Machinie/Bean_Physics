@@ -16,13 +16,17 @@ from .panels.objects_utils import (
     apply_uniform_gravity,
     force_summary,
     particle_summary,
+    particle_trail_enabled,
     particle_visual,
     rigid_body_force_points,
     rigid_body_summary,
+    rigid_body_trail_enabled,
     rigid_body_visual,
     set_rigid_body_force_points,
     set_particle_visual,
+    set_particle_trail_enabled,
     set_rigid_body_visual,
+    set_rigid_body_trail_enabled,
 )
 from ..core.rigid_body.mass_properties import rigid_body_from_points, shift_points_to_com
 from ..io.units import UnitsConfig, label_for
@@ -59,6 +63,8 @@ class ObjectInspector(QtWidgets.QDialog):
         self._particle_form.addRow("Position", self._particle_pos_widget)
         self._particle_form.addRow("Velocity", self._particle_vel_widget)
         self._particle_form.addRow("Mass", self._mass)
+        self._particle_trail = QtWidgets.QCheckBox("Show Trail", self)
+        self._particle_form.addRow("Trail", self._particle_trail)
         self._particle_visual = _build_visual_controls(self)
         self._particle_visual["attach"].clicked.connect(
             lambda: self._on_attach_visual(self._particle_visual)
@@ -174,6 +180,8 @@ class ObjectInspector(QtWidgets.QDialog):
         self._rigid_form.addRow("Quat (w,x,y,z)", self._rb_quat_widget)
         self._rigid_form.addRow("Omega body", self._rb_omega_widget)
         self._rigid_form.addRow("Inertia diag", self._rb_inertia_widget)
+        self._rigid_trail = QtWidgets.QCheckBox("Show Trail", self)
+        self._rigid_form.addRow("Trail", self._rigid_trail)
         self._rigid_visual = _build_visual_controls(self)
         self._rigid_visual["attach"].clicked.connect(
             lambda: self._on_attach_visual(self._rigid_visual)
@@ -262,6 +270,9 @@ class ObjectInspector(QtWidgets.QDialog):
             _set_vector(self._pos, summary["x"], summary["y"], summary["z"])
             _set_vector(self._vel, summary["vx"], summary["vy"], summary["vz"])
             self._mass.setValue(summary["mass"])
+            self._particle_trail.setChecked(
+                particle_trail_enabled(self._defn, self._obj.index)
+            )
             _set_visual_controls(
                 self._particle_visual, particle_visual(self._defn, self._obj.index)
             )
@@ -303,6 +314,9 @@ class ObjectInspector(QtWidgets.QDialog):
             inertia = summary["inertia_body"]
             inertia_diag = np.diag(inertia)
             _set_vector(self._rb_inertia, inertia_diag[0], inertia_diag[1], inertia_diag[2])
+            self._rigid_trail.setChecked(
+                rigid_body_trail_enabled(self._defn, self._obj.index)
+            )
             _set_visual_controls(
                 self._rigid_visual, rigid_body_visual(self._defn, self._obj.index)
             )
@@ -446,17 +460,19 @@ class ObjectInspector(QtWidgets.QDialog):
             self._rb_forces_remove,
             self._rb_forces_enable_all,
             self._rb_forces_disable_all,
+            self._particle_trail,
             self._particle_visual["path"],
             self._particle_visual["attach"],
             self._particle_visual["clear"],
-            *self._particle_visual["scale"],
+            self._particle_visual["scale"],
             *self._particle_visual["offset"],
             *self._particle_visual["rotation"],
             *self._particle_visual["color"],
+            self._rigid_trail,
             self._rigid_visual["path"],
             self._rigid_visual["attach"],
             self._rigid_visual["clear"],
-            *self._rigid_visual["scale"],
+            self._rigid_visual["scale"],
             *self._rigid_visual["offset"],
             *self._rigid_visual["rotation"],
             *self._rigid_visual["color"],
@@ -485,6 +501,11 @@ class ObjectInspector(QtWidgets.QDialog):
                     _visual_from_controls(
                         self._particle_visual, self._scenario_path
                     ),
+                )
+                set_particle_trail_enabled(
+                    self._defn,
+                    self._obj.index,
+                    self._particle_trail.isChecked(),
                 )
             elif self._obj.type == "force":
                 if self._obj.subtype == "uniform_gravity":
@@ -526,6 +547,11 @@ class ObjectInspector(QtWidgets.QDialog):
                     self._defn,
                     self._obj.index,
                     _visual_from_controls(self._rigid_visual, self._scenario_path),
+                )
+                set_rigid_body_trail_enabled(
+                    self._defn,
+                    self._obj.index,
+                    self._rigid_trail.isChecked(),
                 )
                 forces = self._forces_from_table()
                 set_rigid_body_force_points(self._defn, self._obj.index, forces)
@@ -786,6 +812,14 @@ def _vector_fields(
     return fields[0], fields[1], fields[2]
 
 
+def _scale_field(min_value: float = 1e-6, max_value: float = 1e12) -> QtWidgets.QDoubleSpinBox:
+    spin = QtWidgets.QDoubleSpinBox()
+    spin.setRange(min_value, max_value)
+    spin.setDecimals(6)
+    spin.setSingleStep(0.1)
+    return spin
+
+
 def _color_fields() -> tuple[
     QtWidgets.QDoubleSpinBox, QtWidgets.QDoubleSpinBox, QtWidgets.QDoubleSpinBox
 ]:
@@ -902,17 +936,17 @@ def _build_visual_controls(parent: QtWidgets.QWidget) -> dict[str, object]:
     button_row.addWidget(attach)
     button_row.addWidget(clear)
     button_row.addStretch(1)
-    scale = _vector_fields(min_value=1e-6)
+    scale = _scale_field(min_value=1e-6, max_value=1e12)
     offset = _vector_fields()
     rotation = _quat_fields()
     color = _color_fields()
-    _set_vector(scale, 1.0, 1.0, 1.0)
+    scale.setValue(1.0)
     _set_vector(offset, 0.0, 0.0, 0.0)
     _set_quat(rotation, 1.0, 0.0, 0.0, 0.0)
     _set_vector(color, 1.0, 1.0, 1.0)
     layout.addRow("Path", path)
     layout.addRow("", _layout_widget(button_row))
-    layout.addRow("Scale", _vector_widget(scale))
+    layout.addRow("Scale", scale)
     layout.addRow("Offset", _vector_widget(offset))
     layout.addRow("Rotation", _vector_widget(rotation))
     layout.addRow("Color Tint", _vector_widget(color))
@@ -933,17 +967,23 @@ def _set_visual_controls(
 ) -> None:
     if visual is None:
         controls["path"].setText("")
-        _set_vector(controls["scale"], 1.0, 1.0, 1.0)
+        controls["scale"].setValue(1.0)
         _set_vector(controls["offset"], 0.0, 0.0, 0.0)
         _set_quat(controls["rotation"], 1.0, 0.0, 0.0, 0.0)
         _set_vector(controls["color"], 1.0, 1.0, 1.0)
         return
     controls["path"].setText(str(visual.get("mesh_path", "")))
-    scale = visual.get("scale", [1.0, 1.0, 1.0])
+    scale = visual.get("scale", 1.0)
     offset = visual.get("offset_body", [0.0, 0.0, 0.0])
     rotation = visual.get("rotation_body_quat", [1.0, 0.0, 0.0, 0.0])
     color = visual.get("color_tint", [1.0, 1.0, 1.0])
-    _set_vector(controls["scale"], scale[0], scale[1], scale[2])
+    if isinstance(scale, (int, float)):
+        scale_value = float(scale)
+    elif isinstance(scale, (list, tuple, np.ndarray)) and len(scale) > 0:
+        scale_value = float(scale[0])
+    else:
+        scale_value = 1.0
+    controls["scale"].setValue(scale_value)
     _set_vector(controls["offset"], offset[0], offset[1], offset[2])
     _set_quat(controls["rotation"], rotation[0], rotation[1], rotation[2], rotation[3])
     _set_vector(controls["color"], color[0], color[1], color[2])
@@ -956,7 +996,7 @@ def _visual_from_controls(
     if not path:
         return None
     mesh_path = _relativize_mesh_path(path, scenario_path)
-    scale = [field.value() for field in controls["scale"]]
+    scale = float(controls["scale"].value())
     offset = [field.value() for field in controls["offset"]]
     rotation = [field.value() for field in controls["rotation"]]
     color = [field.value() for field in controls["color"]]

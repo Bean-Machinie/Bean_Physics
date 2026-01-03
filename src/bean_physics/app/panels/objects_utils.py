@@ -184,6 +184,16 @@ def particle_visual(defn: ScenarioDefinition, index: int) -> dict[str, object] |
     return visuals[index]
 
 
+def particle_trail_enabled(defn: ScenarioDefinition, index: int) -> bool:
+    particles = defn.get("entities", {}).get("particles")
+    if not particles:
+        return False
+    trails = particles.get("trail_enabled")
+    if not isinstance(trails, list) or index >= len(trails):
+        return False
+    return bool(trails[index])
+
+
 def set_particle_visual(
     defn: ScenarioDefinition, index: int, visual: dict[str, object] | None
 ) -> None:
@@ -196,6 +206,18 @@ def set_particle_visual(
     visuals[index] = visual
 
 
+def set_particle_trail_enabled(
+    defn: ScenarioDefinition, index: int, enabled: bool
+) -> None:
+    particles = defn.get("entities", {}).get("particles")
+    if not particles:
+        raise ValueError("no particles in scenario")
+    trails = particles.setdefault("trail_enabled", [False] * len(particles.get("mass", [])))
+    while len(trails) < len(particles.get("mass", [])):
+        trails.append(False)
+    trails[index] = bool(enabled)
+
+
 def rigid_body_visual(defn: ScenarioDefinition, index: int) -> dict[str, object] | None:
     rigid = defn.get("entities", {}).get("rigid_bodies")
     if not rigid:
@@ -204,6 +226,16 @@ def rigid_body_visual(defn: ScenarioDefinition, index: int) -> dict[str, object]
     if not isinstance(visuals, list) or index >= len(visuals):
         return None
     return visuals[index]
+
+
+def rigid_body_trail_enabled(defn: ScenarioDefinition, index: int) -> bool:
+    rigid = defn.get("entities", {}).get("rigid_bodies")
+    if not rigid:
+        return False
+    trails = rigid.get("trail_enabled")
+    if not isinstance(trails, list) or index >= len(trails):
+        return False
+    return bool(trails[index])
 
 
 def set_rigid_body_visual(
@@ -216,6 +248,18 @@ def set_rigid_body_visual(
     while len(visuals) < len(rigid.get("mass", [])):
         visuals.append(None)
     visuals[index] = visual
+
+
+def set_rigid_body_trail_enabled(
+    defn: ScenarioDefinition, index: int, enabled: bool
+) -> None:
+    rigid = defn.get("entities", {}).get("rigid_bodies")
+    if not rigid:
+        raise ValueError("no rigid bodies in scenario")
+    trails = rigid.setdefault("trail_enabled", [False] * len(rigid.get("mass", [])))
+    while len(trails) < len(rigid.get("mass", [])):
+        trails.append(False)
+    trails[index] = bool(enabled)
 
 
 def rigid_body_force_points(
@@ -262,6 +306,9 @@ def add_particle(defn: ScenarioDefinition) -> int:
     if "visual" in particles:
         visuals = particles.setdefault("visual", [])
         visuals.append(None)
+    if "trail_enabled" in particles:
+        trails = particles.setdefault("trail_enabled", [])
+        trails.append(False)
     return len(particles["mass"]) - 1
 
 
@@ -354,6 +401,9 @@ def add_rigid_body_template(
     rigid["mass"].append(mass_val if kind != "points" else float(total_mass))
     visuals = rigid.setdefault("visual", [])
     visuals.append(None)
+    if "trail_enabled" in rigid:
+        trails = rigid.setdefault("trail_enabled", [])
+        trails.append(False)
 
     sources = rigid.setdefault("source", [])
     if kind == "points":
@@ -395,6 +445,9 @@ def remove_particle(defn: ScenarioDefinition, index: int) -> None:
     visuals = particles.get("visual")
     if isinstance(visuals, list) and len(visuals) > index:
         del visuals[index]
+    trails = particles.get("trail_enabled")
+    if isinstance(trails, list) and len(trails) > index:
+        del trails[index]
     if not particles["mass"]:
         entities = defn.get("entities", {})
         entities.pop("particles", None)
@@ -422,6 +475,9 @@ def remove_rigid_body(defn: ScenarioDefinition, index: int) -> None:
     visuals = rigid.get("visual")
     if isinstance(visuals, list) and len(visuals) > index:
         del visuals[index]
+    trails = rigid.get("trail_enabled")
+    if isinstance(trails, list) and len(trails) > index:
+        del trails[index]
     inertia_list = _rigid_inertia_list(rigid)
     if inertia_list:
         del inertia_list[index]

@@ -27,10 +27,12 @@ from .panels.objects_utils import (
     list_forces,
     list_particles,
     list_rigid_bodies,
+    particle_trail_enabled,
     particle_visual,
     remove_force,
     remove_particle,
     remove_rigid_body,
+    rigid_body_trail_enabled,
     rigid_body_visual,
     rigid_body_shapes,
     rigid_body_points_body,
@@ -109,12 +111,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._toolbar.addWidget(self._follow_toggle)
 
         self._toolbar.addSeparator()
-
-        self._trail_toggle = QtWidgets.QToolButton(self)
-        self._trail_toggle.setText("Trails")
-        self._trail_toggle.setCheckable(True)
-        self._trail_toggle.toggled.connect(self._on_trails_toggled)
-        self._toolbar.addWidget(self._trail_toggle)
 
         trail_label = QtWidgets.QLabel("Trail Length")
         trail_label.setContentsMargins(6, 0, 6, 0)
@@ -537,6 +533,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._sync_duration_controls()
 
     def _apply_state_to_viewport(self) -> None:
+        self._sync_trail_target()
         self._viewport.set_particles(self._controller.particle_positions())
         self._viewport.set_particle_visuals(
             self._particle_visual_specs(),
@@ -553,6 +550,21 @@ class MainWindow(QtWidgets.QMainWindow):
             self._controller.rigid_body_quat(),
         )
         self._update_rigid_body_points()
+
+    def _sync_trail_target(self) -> None:
+        if self._session.scenario_def is None:
+            self._viewport.set_trail_targets([])
+            self._viewport.set_trails_enabled(False)
+            return
+        targets: list[tuple[str, int]] = []
+        for ref in list_particles(self._session.scenario_def):
+            if particle_trail_enabled(self._session.scenario_def, ref.index):
+                targets.append(("particle", ref.index))
+        for ref in list_rigid_bodies(self._session.scenario_def):
+            if rigid_body_trail_enabled(self._session.scenario_def, ref.index):
+                targets.append(("rigid_body", ref.index))
+        self._viewport.set_trail_targets(targets)
+        self._viewport.set_trails_enabled(bool(targets))
 
     def _particle_visual_specs(self) -> list[dict[str, object] | None]:
         if self._session.scenario_def is None:
@@ -574,6 +586,18 @@ class MainWindow(QtWidgets.QMainWindow):
             visuals.append(self._resolve_visual_spec(visual))
         return visuals
 
+    @staticmethod
+    def _normalize_visual_scale(value: object) -> list[float]:
+        if isinstance(value, (int, float)):
+            scale = float(value)
+            return [scale, scale, scale]
+        if isinstance(value, (list, tuple, np.ndarray)) and len(value) > 0:
+            if len(value) >= 3:
+                return [float(value[0]), float(value[1]), float(value[2])]
+            scale = float(value[0])
+            return [scale, scale, scale]
+        return [1.0, 1.0, 1.0]
+
     def _resolve_visual_spec(
         self, visual: dict[str, object] | None
     ) -> dict[str, object] | None:
@@ -591,7 +615,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not resolved.exists():
             self.statusBar().showMessage(f"Mesh not found: {resolved}")
             return {
-                "scale": visual.get("scale", [1.0, 1.0, 1.0]),
+                "scale": self._normalize_visual_scale(visual.get("scale", 1.0)),
                 "offset_body": to_si(
                     visual.get("offset_body", [0.0, 0.0, 0.0]),
                     "length",
@@ -606,7 +630,7 @@ class MainWindow(QtWidgets.QMainWindow):
             }
         return {
             "mesh_path": str(resolved),
-            "scale": visual.get("scale", [1.0, 1.0, 1.0]),
+            "scale": self._normalize_visual_scale(visual.get("scale", 1.0)),
             "offset_body": to_si(
                 visual.get("offset_body", [0.0, 0.0, 0.0]),
                 "length",
@@ -669,6 +693,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._objects_panel.select_object(None)
             self._viewport.set_selected_particles([])
             self._viewport.set_selected_rigid_body(None)
+            self._viewport.set_trail_targets([])
+            self._viewport.set_trails_enabled(False)
             if self._inspector.isVisible():
                 self._inspector.set_target(
                     self._session.scenario_def, None, self._session.scenario_path
@@ -698,6 +724,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._viewport.set_selected_particles([])
             self._viewport.set_selected_rigid_body(None)
             self._viewport.set_rigid_body_points(np.zeros((0, 3), dtype=np.float32))
+            self._sync_trail_target()
             self._inspector.set_target(
                 self._session.scenario_def, None, self._session.scenario_path
             )
@@ -712,6 +739,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._viewport.set_selected_particles([])
             self._viewport.set_selected_rigid_body(None)
         self._update_rigid_body_points()
+        self._sync_trail_target()
         if self._inspector.isVisible():
             self._inspector.set_target(
                 self._session.scenario_def, obj, self._session.scenario_path
@@ -831,6 +859,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_state_to_viewport()
         self._refresh_objects_panel()
         self._objects_panel.select_object(obj)
+        self._sync_trail_target()
         self._update_action_state()
         self._update_status()
         self._update_window_title()
@@ -897,9 +926,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_follow_toggled(self, enabled: bool) -> None:
         self._viewport.set_follow_selection(enabled)
-
-    def _on_trails_toggled(self, enabled: bool) -> None:
-        self._viewport.set_trails_enabled(enabled)
 
     def _on_trail_length_changed(self, value: int) -> None:
         self._viewport.set_trail_length(value)

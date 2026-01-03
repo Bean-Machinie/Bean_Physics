@@ -109,7 +109,9 @@ class ViewportWidget(QtWidgets.QWidget):
         self._trail_length = 500
         self._trail_stride = 1
         self._trail_counter = 0
-        self._trail_points: list[np.ndarray] = []
+        self._trail_targets: list[tuple[str, int]] = []
+        self._trail_points: dict[tuple[str, int], list[np.ndarray]] = {}
+        self._trail_visuals: list[scene.visuals.Line] = []
         self._follow_selection = False
         self._labels_enabled = False
 
@@ -258,8 +260,6 @@ class ViewportWidget(QtWidgets.QWidget):
 
     def set_selected_particles(self, indices: list[int]) -> None:
         self._selected_indices = indices
-        self._trail_points = []
-        self._trail_counter = 0
         self._update_selected_particles()
         self._update_trail()
         self._update_labels()
@@ -313,8 +313,28 @@ class ViewportWidget(QtWidgets.QWidget):
         self._trail_stride = max(1, int(stride))
 
     def reset_trails(self) -> None:
-        self._trail_points = []
+        self._trail_points = {}
+        self._trail_counter = 0
+        for visual in self._trail_visuals:
+            visual.set_data(np.zeros((0, 3), dtype=np.float32))
         self._trail.set_data(np.zeros((0, 3), dtype=np.float32))
+
+    def set_trail_targets(self, targets: list[tuple[str, int]]) -> None:
+        cleaned: list[tuple[str, int]] = []
+        seen: set[tuple[str, int]] = set()
+        for target_type, index in targets:
+            if target_type not in {"particle", "rigid_body"}:
+                continue
+            key = (target_type, int(index))
+            if key in seen:
+                continue
+            cleaned.append(key)
+            seen.add(key)
+        if cleaned != self._trail_targets:
+            self._trail_targets = cleaned
+            self._trail_points = {key: self._trail_points.get(key, []) for key in cleaned}
+            self._trail_counter = 0
+            self._sync_trail_visuals()
 
     def set_labels_enabled(self, enabled: bool) -> None:
         self._labels_enabled = enabled
@@ -370,21 +390,42 @@ class ViewportWidget(QtWidgets.QWidget):
     def _update_trail(self) -> None:
         if not self._trail_enabled or self._trail_length <= 0:
             return
-        if not self._selected_indices:
-            self._trail.set_data(np.zeros((0, 3), dtype=np.float32))
-            return
-        idx = self._selected_indices[0]
-        if idx < 0 or idx >= self._last_particle_pos.shape[0]:
-            self._trail.set_data(np.zeros((0, 3), dtype=np.float32))
-            return
         self._trail_counter += 1
         if self._trail_counter % self._trail_stride != 0:
             return
-        self._trail_points.append(self._last_particle_pos[idx].copy())
-        if len(self._trail_points) > self._trail_length:
-            self._trail_points.pop(0)
-        trail = np.asarray(self._trail_points, dtype=np.float32)
-        self._trail.set_data(trail)
+        if not self._trail_targets:
+            self._trail.set_data(np.zeros((0, 3), dtype=np.float32))
+            return
+        self._sync_trail_visuals()
+        for visual, target in zip(self._trail_visuals, self._trail_targets, strict=False):
+            target_type, idx = target
+            pos = (
+                self._last_particle_pos
+                if target_type == "particle"
+                else self._last_rigid_pos
+            )
+            if idx < 0 or idx >= pos.shape[0]:
+                visual.set_data(np.zeros((0, 3), dtype=np.float32))
+                continue
+            points = self._trail_points.setdefault(target, [])
+            points.append(pos[idx].copy())
+            if len(points) > self._trail_length:
+                points.pop(0)
+            trail = np.asarray(points, dtype=np.float32)
+            visual.set_data(trail)
+
+    def _sync_trail_visuals(self) -> None:
+        if len(self._trail_visuals) == len(self._trail_targets):
+            return
+        while len(self._trail_visuals) < len(self._trail_targets):
+            visual = scene.visuals.Line(
+                parent=self._view.scene, color=(0.9, 0.9, 0.2, 0.7)
+            )
+            visual.set_gl_state("translucent", depth_test=False)
+            self._trail_visuals.append(visual)
+        while len(self._trail_visuals) > len(self._trail_targets):
+            visual = self._trail_visuals.pop()
+            visual.parent = None
 
     def _update_labels(self) -> None:
         if not self._labels_enabled:
