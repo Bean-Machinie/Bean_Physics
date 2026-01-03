@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from bean_physics.core.forces import RigidBodyForces
 from bean_physics.core.integrators import VelocityVerlet
@@ -174,3 +175,28 @@ def test_force_couple_spins_monotonic() -> None:
         integrator.step(state, model, dt)
         omega_z.append(state.rigid_bodies.omega[0, 2])
     assert all(omega_z[i] <= omega_z[i + 1] + 1e-12 for i in range(len(omega_z) - 1))
+
+
+def test_throttle_scales_angular_accel() -> None:
+    state_full = _make_state(omega_body=np.zeros((1, 3), dtype=np.float64))
+    state_half = _make_state(omega_body=np.zeros((1, 3), dtype=np.float64))
+    inertia = np.array([[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]])
+    model_full = RigidBodyForces(mass=np.array([1.0]), inertia_body=inertia)
+    model_half = RigidBodyForces(mass=np.array([1.0]), inertia_body=inertia)
+    model_full.set_applied_forces(
+        body_index=np.array([0], dtype=np.int64),
+        forces_body=np.array([[0.0, 1.0, 0.0]], dtype=np.float64),
+        points_body=np.array([[1.0, 0.0, 0.0]], dtype=np.float64),
+    )
+    model_half.set_applied_forces(
+        body_index=np.array([0], dtype=np.int64),
+        forces_body=np.array([[0.0, 0.5, 0.0]], dtype=np.float64),
+        points_body=np.array([[1.0, 0.0, 0.0]], dtype=np.float64),
+    )
+    integrator = VelocityVerlet()
+    dt = 1e-3
+    integrator.step(state_full, model_full, dt)
+    integrator.step(state_half, model_half, dt)
+    assert state_half.rigid_bodies.omega[0, 2] == pytest.approx(
+        0.5 * state_full.rigid_bodies.omega[0, 2]
+    )

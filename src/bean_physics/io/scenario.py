@@ -257,6 +257,14 @@ def _validate_scenario_v1(data: dict[str, Any]) -> ScenarioDefinition:
                     raise ValueError("rigid_body_forces.force_world must have length 3")
                 if "enabled" in f and not isinstance(f["enabled"], bool):
                     raise ValueError("rigid_body_forces.enabled must be boolean")
+                if "throttle" in f:
+                    throttle = float(f["throttle"])
+                    if throttle < 0.0 or throttle > 1.0:
+                        raise ValueError("rigid_body_forces.throttle must be in [0, 1]")
+                if "name" in f and not isinstance(f["name"], str):
+                    raise ValueError("rigid_body_forces.name must be a string")
+                if "group" in f and not isinstance(f["group"], str):
+                    raise ValueError("rigid_body_forces.group must be a string")
         else:
             raise ValueError(f"unknown model type: {key}")
 
@@ -271,14 +279,15 @@ def _resolve_force_body(
         return np.zeros((0, 3), dtype=np.float64)
     rot = quat_to_rotmat(state.rigid_bodies.quat)
     for force in forces:
+        throttle = float(force.get("throttle", 1.0))
         if "force_body" in force:
-            forces_body.append(force["force_body"])
+            base = np.asarray(force["force_body"], dtype=np.float64)
         else:
             body_idx = int(force["body_index"])
             f_world = np.asarray(force["force_world"], dtype=np.float64)
             r = rot[body_idx]
-            f_body = r.T @ f_world
-            forces_body.append(f_body.tolist())
+            base = r.T @ f_world
+        forces_body.append((throttle * base).tolist())
     return np.asarray(forces_body, dtype=np.float64)
 
 

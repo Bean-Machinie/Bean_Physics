@@ -146,9 +146,9 @@ class ObjectInspector(QtWidgets.QDialog):
         self._rb_forces_widget = QtWidgets.QWidget(self)
         forces_layout = QtWidgets.QVBoxLayout(self._rb_forces_widget)
         forces_layout.setContentsMargins(0, 0, 0, 0)
-        self._rb_forces_table = QtWidgets.QTableWidget(0, 7, self)
+        self._rb_forces_table = QtWidgets.QTableWidget(0, 10, self)
         self._rb_forces_table.setHorizontalHeaderLabels(
-            ["enabled", "fx (body)", "fy (body)", "fz (body)", "rx", "ry", "rz"]
+            ["enabled", "name", "group", "throttle", "fx (body)", "fy (body)", "fz (body)", "rx", "ry", "rz"]
         )
         self._rb_forces_table.horizontalHeader().setStretchLastSection(True)
         self._rb_forces_table.verticalHeader().setVisible(False)
@@ -162,10 +162,16 @@ class ObjectInspector(QtWidgets.QDialog):
         forces_buttons = QtWidgets.QHBoxLayout()
         self._rb_forces_add = QtWidgets.QPushButton("Add Force", self)
         self._rb_forces_remove = QtWidgets.QPushButton("Remove Selected", self)
+        self._rb_forces_enable_all = QtWidgets.QPushButton("Enable All", self)
+        self._rb_forces_disable_all = QtWidgets.QPushButton("Disable All", self)
         self._rb_forces_add.clicked.connect(self._on_add_force)
         self._rb_forces_remove.clicked.connect(self._on_remove_force)
+        self._rb_forces_enable_all.clicked.connect(self._on_enable_all_forces)
+        self._rb_forces_disable_all.clicked.connect(self._on_disable_all_forces)
         forces_buttons.addWidget(self._rb_forces_add)
         forces_buttons.addWidget(self._rb_forces_remove)
+        forces_buttons.addWidget(self._rb_forces_enable_all)
+        forces_buttons.addWidget(self._rb_forces_disable_all)
         forces_buttons.addStretch(1)
         forces_layout.addLayout(forces_buttons)
         rigid_form.addRow("Force Points", self._rb_forces_widget)
@@ -287,6 +293,8 @@ class ObjectInspector(QtWidgets.QDialog):
             self._rb_forces_table,
             self._rb_forces_add,
             self._rb_forces_remove,
+            self._rb_forces_enable_all,
+            self._rb_forces_disable_all,
         ]
         for row in self._rb_points_inertia:
             widgets.extend(row)
@@ -457,15 +465,24 @@ class ObjectInspector(QtWidgets.QDialog):
 
     def _load_force_table(self, forces: list[dict[str, object]]) -> None:
         self._rb_forces_table.setRowCount(0)
-        for force in forces:
+        for idx, force in enumerate(forces, start=1):
             self._append_force_row(
                 force.get("enabled", True),
                 force.get("force_body", force.get("force_world", [0.0, 0.0, 0.0])),
                 force.get("point_body", [0.0, 0.0, 0.0]),
+                force.get("name", f"Thruster {idx}"),
+                force.get("group", ""),
+                force.get("throttle", 1.0),
             )
 
     def _append_force_row(
-        self, enabled: object, force_body: object, point_body: object
+        self,
+        enabled: object,
+        force_body: object,
+        point_body: object,
+        name: object,
+        group: object,
+        throttle: object,
     ) -> None:
         row = self._rb_forces_table.rowCount()
         self._rb_forces_table.insertRow(row)
@@ -475,7 +492,7 @@ class ObjectInspector(QtWidgets.QDialog):
             QtCore.Qt.CheckState.Checked if bool(enabled) else QtCore.Qt.CheckState.Unchecked
         )
         self._rb_forces_table.setItem(row, 0, enabled_item)
-        entries = [*force_body, *point_body]
+        entries = [name, group, throttle, *force_body, *point_body]
         for col, value in enumerate(entries, start=1):
             item = QtWidgets.QTableWidgetItem(str(value))
             self._rb_forces_table.setItem(row, col, item)
@@ -485,8 +502,14 @@ class ObjectInspector(QtWidgets.QDialog):
         for row in range(self._rb_forces_table.rowCount()):
             enabled_item = self._rb_forces_table.item(row, 0)
             enabled = True if enabled_item is None else enabled_item.checkState() == QtCore.Qt.CheckState.Checked
+            name_item = self._rb_forces_table.item(row, 1)
+            group_item = self._rb_forces_table.item(row, 2)
+            throttle_item = self._rb_forces_table.item(row, 3)
+            name = "" if name_item is None else name_item.text()
+            group = "" if group_item is None else group_item.text()
+            throttle = 1.0 if throttle_item is None else float(throttle_item.text())
             values = []
-            for col in range(1, 7):
+            for col in range(4, 10):
                 item = self._rb_forces_table.item(row, col)
                 if item is None:
                     values.append(0.0)
@@ -500,18 +523,47 @@ class ObjectInspector(QtWidgets.QDialog):
                     "force_body": force_body,
                     "point_body": point_body,
                     "enabled": enabled,
+                    "name": name,
+                    "group": group,
+                    "throttle": throttle,
                 }
             )
         return forces
 
     def _on_add_force(self) -> None:
-        self._append_force_row(True, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+        row = self._rb_forces_table.rowCount() + 1
+        self._append_force_row(
+            True,
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            f"Thruster {row}",
+            "",
+            1.0,
+        )
 
     def _on_remove_force(self) -> None:
         row = self._rb_forces_table.currentRow()
         if row < 0:
             return
         self._rb_forces_table.removeRow(row)
+
+    def _on_enable_all_forces(self) -> None:
+        for row in range(self._rb_forces_table.rowCount()):
+            item = self._rb_forces_table.item(row, 0)
+            if item is None:
+                item = QtWidgets.QTableWidgetItem()
+                item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+                self._rb_forces_table.setItem(row, 0, item)
+            item.setCheckState(QtCore.Qt.CheckState.Checked)
+
+    def _on_disable_all_forces(self) -> None:
+        for row in range(self._rb_forces_table.rowCount()):
+            item = self._rb_forces_table.item(row, 0)
+            if item is None:
+                item = QtWidgets.QTableWidgetItem()
+                item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+                self._rb_forces_table.setItem(row, 0, item)
+            item.setCheckState(QtCore.Qt.CheckState.Unchecked)
 
     @staticmethod
     def _vector_values(fields: Sequence[QtWidgets.QDoubleSpinBox]) -> list[float]:

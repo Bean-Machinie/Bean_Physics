@@ -50,6 +50,9 @@ This schema defines a declarative JSON format for reproducible simulations.
     - `body_index` (int)
     - `point_body` (array[3]) point in body coordinates relative to CoM
     - `force_body` (array[3]) force in body coordinates
+    - `throttle` (float, optional; defaults 1.0, [0..1])
+    - `name` (string, optional)
+    - `group` (string, optional)
     - `enabled` (bool, optional; defaults true)
 
 Legacy note: older scenarios may use `force_world`. These are interpreted as
