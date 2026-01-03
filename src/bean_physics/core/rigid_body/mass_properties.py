@@ -37,6 +37,22 @@ def mass_properties(points_body: np.ndarray, masses: np.ndarray) -> tuple[float,
     return total_mass, com, inertia
 
 
+def rigid_body_from_points(
+    points_body: np.ndarray, masses: np.ndarray
+) -> tuple[float, np.ndarray, np.ndarray]:
+    """Return mass properties for point masses in body coordinates."""
+    return mass_properties(points_body, masses)
+
+
+def shift_points_to_com(
+    points_body: np.ndarray, masses: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Shift points so the center of mass is at the origin."""
+    _, com, _ = mass_properties(points_body, masses)
+    shifted = np.asarray(points_body, dtype=np.float64) - com
+    return shifted, com
+
+
 def box_inertia_body(mass: float, size: np.ndarray) -> np.ndarray:
     """Return inertia tensor for a box about CoM in body frame."""
     mass_val = float(mass)

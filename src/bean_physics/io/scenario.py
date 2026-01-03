@@ -13,6 +13,7 @@ from ..core.integrators import SymplecticEuler, VelocityVerlet
 from ..core.rigid_body.mass_properties import (
     box_inertia_body,
     mass_properties,
+    rigid_body_from_points,
     sphere_inertia_body,
 )
 from ..core.state import ParticlesState, RigidBodiesState, SystemState
@@ -185,18 +186,39 @@ def _validate_scenario_v1(data: dict[str, Any]) -> ScenarioDefinition:
                 if not isinstance(src, dict):
                     raise ValueError("rigid_bodies.source entries must be objects")
                 kind = _require(src, "kind", f"rigid_bodies.source[{idx}]")
-                params = _require(src, "params", f"rigid_bodies.source[{idx}]")
+                params = src.get("params", {})
                 mass = _require(src, "mass", f"rigid_bodies.source[{idx}]")
-                if kind not in {"box", "sphere"}:
-                    raise ValueError("rigid_bodies.source.kind must be 'box' or 'sphere'")
+                if kind not in {"box", "sphere", "points"}:
+                    raise ValueError("rigid_bodies.source.kind must be 'box', 'sphere', or 'points'")
                 if kind == "box":
+                    params = _require(src, "params", f"rigid_bodies.source[{idx}]")
                     size = params.get("size")
                     if size is None or len(size) != 3:
                         raise ValueError("rigid_bodies.source.params.size must have length 3")
                 if kind == "sphere":
+                    params = _require(src, "params", f"rigid_bodies.source[{idx}]")
                     radius = params.get("radius")
                     if radius is None:
                         raise ValueError("rigid_bodies.source.params.radius is required")
+                if kind == "points":
+                    points = src.get("points")
+                    if points is None:
+                        points = params.get("points")
+                    if not isinstance(points, list) or not points:
+                        raise ValueError("rigid_bodies.source.points must be a non-empty list")
+                    total_mass = 0.0
+                    for p_idx, point in enumerate(points):
+                        if not isinstance(point, dict):
+                            raise ValueError("rigid_bodies.source.points entries must be objects")
+                        if "mass" not in point or "pos" not in point:
+                            raise ValueError("rigid_bodies.source.points entries require mass and pos")
+                        if len(point["pos"]) != 3:
+                            raise ValueError("rigid_bodies.source.points.pos must have length 3")
+                        if float(point["mass"]) <= 0.0:
+                            raise ValueError("rigid_bodies.source.points.mass must be > 0")
+                        total_mass += float(point["mass"])
+                    if not np.isclose(float(r["mass"][idx]), total_mass):
+                        raise ValueError("rigid_bodies.mass must match sum of source points mass")
                 if float(mass) <= 0.0:
                     raise ValueError("rigid_bodies.source.mass must be > 0")
                 if not np.isclose(float(mass), float(r["mass"][idx])):
@@ -253,6 +275,16 @@ def _rigid_body_inertia(rigid: dict[str, Any], mass: np.ndarray) -> np.ndarray:
                 inertia_list.append(
                     sphere_inertia_body(mass[idx], float(params.get("radius")))
                 )
+            elif kind == "points":
+                points = src.get("points")
+                if points is None:
+                    points = params.get("points", [])
+                positions = np.asarray([p["pos"] for p in points], dtype=np.float64)
+                masses = np.asarray([p["mass"] for p in points], dtype=np.float64)
+                total_mass, _, inertia = rigid_body_from_points(positions, masses)
+                if not np.isclose(total_mass, float(mass[idx])):
+                    raise ValueError("rigid_bodies.mass must match sum of source points mass")
+                inertia_list.append(inertia)
             else:
                 raise ValueError("unsupported rigid body source kind")
         return np.stack(inertia_list, axis=0)

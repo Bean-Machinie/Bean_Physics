@@ -11,6 +11,8 @@ import numpy as np
 from ...core.rigid_body.mass_properties import (
     box_inertia_body,
     mass_properties,
+    rigid_body_from_points,
+    shift_points_to_com,
     sphere_inertia_body,
 )
 from ...io.scenario import ScenarioDefinition
@@ -100,6 +102,11 @@ def rigid_body_summary(defn: ScenarioDefinition, index: int) -> dict[str, object
     mass = rigid["mass"][index]
     source = _rigid_source_entry(rigid, index)
     inertia = _rigid_inertia_body(rigid, index)
+    com = np.zeros(3, dtype=np.float64)
+    if source and source.get("kind") == "points":
+        points, masses = _points_from_source(source)
+        total_mass, com, inertia = rigid_body_from_points(points, masses)
+        mass = total_mass
     return {
         "x": float(pos[0]),
         "y": float(pos[1]),
@@ -115,6 +122,7 @@ def rigid_body_summary(defn: ScenarioDefinition, index: int) -> dict[str, object
         "wy": float(omega[1]),
         "wz": float(omega[2]),
         "mass": float(mass),
+        "com": [float(v) for v in com],
         "source": source,
         "inertia_body": inertia,
     }
@@ -139,9 +147,26 @@ def rigid_body_shapes(defn: ScenarioDefinition | None) -> list[dict[str, object]
             shapes.append({"kind": "box", "size": params.get("size", [1.0, 1.0, 1.0])})
         elif kind == "sphere":
             shapes.append({"kind": "sphere", "radius": params.get("radius", 0.5)})
+        elif kind == "points":
+            shapes.append({"kind": "sphere", "radius": 0.2})
         else:
             shapes.append({"kind": "sphere", "radius": 0.5})
     return shapes
+
+
+def rigid_body_points_body(defn: ScenarioDefinition | None, index: int) -> np.ndarray:
+    if defn is None:
+        return np.zeros((0, 3), dtype=np.float64)
+    rigid = defn.get("entities", {}).get("rigid_bodies")
+    if not rigid:
+        return np.zeros((0, 3), dtype=np.float64)
+    sources = rigid.get("source")
+    if isinstance(sources, list) and index < len(sources):
+        source = sources[index]
+        if source.get("kind") == "points":
+            points, _ = _points_from_source(source)
+            return points
+    return np.zeros((0, 3), dtype=np.float64)
 
 
 def add_particle(defn: ScenarioDefinition) -> int:
@@ -184,17 +209,25 @@ def add_rigid_body_template(
     defn: ScenarioDefinition, kind: str, params: dict[str, object] | None = None
 ) -> int:
     kind = kind.lower().strip()
-    if kind not in {"box", "sphere"}:
+    if kind not in {"box", "sphere", "points"}:
         raise ValueError("unsupported rigid body template")
     params = params or {}
     if kind == "box":
         size = params.get("size", [1.0, 1.0, 1.0])
         inertia = box_inertia_body(1.0, np.asarray(size, dtype=np.float64))
         source_params = {"size": [float(v) for v in size]}
-    else:
+    elif kind == "sphere":
         radius = float(params.get("radius", 0.5))
         inertia = sphere_inertia_body(1.0, radius)
         source_params = {"radius": radius}
+    else:
+        points = params.get("points")
+        if points is None:
+            points = [{"mass": 1.0, "pos": [0.0, 0.0, 0.0]}]
+        points_body, masses = _points_from_list(points)
+        total_mass, _, inertia = rigid_body_from_points(points_body, masses)
+        points_body, _ = shift_points_to_com(points_body, masses)
+        source_params = {"points": _points_to_list(points_body, masses)}
 
     entities = defn.setdefault("entities", {})
     rigid = entities.setdefault(
@@ -219,14 +252,33 @@ def add_rigid_body_template(
     rigid["vel"].append([0.0, 0.0, 0.0])
     rigid["quat"].append([1.0, 0.0, 0.0, 0.0])
     rigid["omega_body"].append([0.0, 0.0, 0.0])
-    rigid["mass"].append(1.0)
+    rigid["mass"].append(1.0 if kind != "points" else float(total_mass))
 
     sources = rigid.setdefault("source", [])
-    sources.append({"kind": kind, "params": source_params, "mass": 1.0})
+    if kind == "points":
+        sources.append(
+            {
+                "kind": kind,
+                "points": source_params["points"],
+                "mass": rigid["mass"][-1],
+            }
+        )
+    else:
+        sources.append(
+            {
+                "kind": kind,
+                "params": source_params,
+                "mass": rigid["mass"][-1],
+            }
+        )
 
     inertia_list = _rigid_inertia_list(rigid)
     inertia_list.append(inertia)
     _set_rigid_inertia_list(rigid, inertia_list)
+    if kind == "points":
+        mass_dist = rigid["mass_distribution"]
+        mass_dist["points_body"] = [p for p in points_body.tolist()]
+        mass_dist["point_masses"] = [float(m) for m in masses.tolist()]
     return len(rigid["mass"]) - 1
 
 
@@ -344,7 +396,7 @@ def apply_rigid_body_edit(
     quat_vals = _validate_quat(quat)
 
     kind = kind.lower().strip()
-    if kind not in {"box", "sphere"}:
+    if kind not in {"box", "sphere", "points"}:
         raise ValueError("unsupported rigid body template")
 
     if kind == "box":
@@ -353,12 +405,21 @@ def apply_rigid_body_edit(
             raise ValueError("size is required for box")
         inertia = box_inertia_body(mass_val, np.asarray(size, dtype=np.float64))
         source_params = {"size": [float(v) for v in size]}
-    else:
+    elif kind == "sphere":
         radius = params.get("radius")
         if radius is None:
             raise ValueError("radius is required for sphere")
         inertia = sphere_inertia_body(mass_val, float(radius))
         source_params = {"radius": float(radius)}
+    else:
+        points = params.get("points")
+        if points is None:
+            raise ValueError("points are required for points source")
+        points_body, masses = _points_from_list(points)
+        total_mass, _, inertia = rigid_body_from_points(points_body, masses)
+        points_body, _ = shift_points_to_com(points_body, masses)
+        source_params = {"points": _points_to_list(points_body, masses)}
+        mass_val = total_mass
 
     rigid["pos"][index] = pos_vals
     rigid["vel"][index] = vel_vals
@@ -371,13 +432,23 @@ def apply_rigid_body_edit(
         sources.append(
             {"kind": "box", "params": {"size": [1.0, 1.0, 1.0]}, "mass": 1.0}
         )
-    sources[index] = {"kind": kind, "params": source_params, "mass": mass_val}
+    if kind == "points":
+        sources[index] = {"kind": kind, "points": source_params["points"], "mass": mass_val}
+    else:
+        sources[index] = {"kind": kind, "params": source_params, "mass": mass_val}
 
     inertia_list = _rigid_inertia_list(rigid)
     while len(inertia_list) < len(rigid["mass"]):
         inertia_list.append(np.eye(3, dtype=np.float64))
     inertia_list[index] = inertia
     _set_rigid_inertia_list(rigid, inertia_list)
+    if kind == "points":
+        mass_dist = rigid.setdefault(
+            "mass_distribution",
+            {"points_body": [[0.0, 0.0, 0.0]], "point_masses": [1.0]},
+        )
+        mass_dist["points_body"] = [p for p in points_body.tolist()]
+        mass_dist["point_masses"] = [float(m) for m in masses.tolist()]
 
 
 def validate_nbody_fields(
@@ -470,6 +541,42 @@ def _set_rigid_inertia_list(
         mass_dist["inertia_body"] = inertia_list[0].tolist()
     else:
         mass_dist["inertia_body"] = [arr.tolist() for arr in inertia_list]
+
+
+def _points_from_source(source: dict[str, object]) -> tuple[np.ndarray, np.ndarray]:
+    points = source.get("points")
+    if points is None:
+        params = source.get("params", {})
+        points = params.get("points", [])
+    return _points_from_list(points)
+
+
+def _points_from_list(
+    points: Sequence[dict[str, object]],
+) -> tuple[np.ndarray, np.ndarray]:
+    if not points:
+        raise ValueError("points list must not be empty")
+    positions = []
+    masses = []
+    for idx, entry in enumerate(points):
+        if not isinstance(entry, dict):
+            raise ValueError(f"point {idx} must be an object")
+        mass = entry.get("mass")
+        pos = entry.get("pos")
+        if mass is None or pos is None:
+            raise ValueError(f"point {idx} must have mass and pos")
+        pos_vals = _validate_vec3(pos, f"points[{idx}].pos")
+        mass_val = _validate_float(mass, f"points[{idx}].mass", positive=True, allow_zero=False)
+        positions.append(pos_vals)
+        masses.append(mass_val)
+    return np.asarray(positions, dtype=np.float64), np.asarray(masses, dtype=np.float64)
+
+
+def _points_to_list(points_body: np.ndarray, masses: np.ndarray) -> list[dict[str, object]]:
+    return [
+        {"mass": float(masses[i]), "pos": [float(v) for v in points_body[i]]}
+        for i in range(points_body.shape[0])
+    ]
 
 
 def _validate_quat(values: Sequence[object]) -> list[float]:

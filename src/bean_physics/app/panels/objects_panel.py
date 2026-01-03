@@ -73,6 +73,8 @@ class ObjectsPanel(QtWidgets.QWidget):
                 kind = "Box"
             elif source and source.get("kind") == "sphere":
                 kind = "Sphere"
+            elif source and source.get("kind") == "points":
+                kind = "Points"
             title = f"{kind} {obj.index + 1}"
             detail = (
                 f"mass {summary['mass']:.3g}  "
@@ -142,6 +144,8 @@ class ObjectsPanel(QtWidgets.QWidget):
         box_action.setData({"type": "rigid_body", "subtype": "box"})
         sphere_action = rigid_menu.addAction("Sphere (Template)")
         sphere_action.setData({"type": "rigid_body", "subtype": "sphere"})
+        points_action = rigid_menu.addAction("Points")
+        points_action.setData({"type": "rigid_body", "subtype": "points"})
 
         menu.triggered.connect(self._on_add_action_triggered)
         return menu

@@ -63,8 +63,10 @@ class ViewportWidget(QtWidgets.QWidget):
         self._particles = scene.visuals.Markers(parent=self._view.scene)
         self._rigid_visuals: list[scene.visuals.Mesh] = []
         self._rigid_shapes: list[dict[str, object]] = []
+        self._rigid_points = scene.visuals.Markers(parent=self._view.scene)
         self._selected_particles = scene.visuals.Markers(parent=self._view.scene)
         self._selected_particles.set_gl_state("translucent", depth_test=False)
+        self._rigid_points.set_gl_state("translucent", depth_test=False)
         self._trail = scene.visuals.Line(parent=self._view.scene, color=(0.9, 0.9, 0.2, 0.7))
         self._trail.set_gl_state("translucent", depth_test=False)
         self._label = scene.visuals.Text(
@@ -147,6 +149,19 @@ class ViewportWidget(QtWidgets.QWidget):
             visual.transform.matrix = transform
         self._update_rigid_visual_styles()
         self._update_follow()
+
+    def set_rigid_body_points(self, points_world: np.ndarray) -> None:
+        points = np.asarray(points_world, dtype=np.float32)
+        if points.size == 0:
+            points = np.zeros((0, 3), dtype=np.float32)
+        if points.ndim != 2 or points.shape[1] != 3:
+            raise ValueError("points_world must have shape (K, 3)")
+        self._rigid_points.set_data(
+            points,
+            face_color=(0.95, 0.95, 0.2, 0.9),
+            edge_color=None,
+            size=4,
+        )
 
     def set_selected_particles(self, indices: list[int]) -> None:
         self._selected_indices = indices

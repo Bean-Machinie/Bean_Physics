@@ -46,6 +46,41 @@ def test_round_trip_rigid_body(tmp_path: Path) -> None:
     assert _scenario_equal(defn, defn2)
 
 
+def test_round_trip_rigid_body_points(tmp_path: Path) -> None:
+    defn = {
+        "schema_version": 1,
+        "simulation": {"dt": 0.01, "steps": 10, "integrator": "velocity_verlet"},
+        "entities": {
+            "rigid_bodies": {
+                "pos": [[0.0, 0.0, 0.0]],
+                "vel": [[0.0, 0.0, 0.0]],
+                "quat": [[1.0, 0.0, 0.0, 0.0]],
+                "omega_body": [[0.0, 0.0, 0.0]],
+                "mass": [3.0],
+                "mass_distribution": {
+                    "points_body": [[-1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+                    "point_masses": [1.0, 2.0],
+                },
+                "source": [
+                    {
+                        "kind": "points",
+                        "points": [
+                            {"mass": 1.0, "pos": [-1.0, 0.0, 0.0]},
+                            {"mass": 2.0, "pos": [2.0, 0.0, 0.0]},
+                        ],
+                        "mass": 3.0,
+                    }
+                ],
+            }
+        },
+        "models": [],
+    }
+    out = tmp_path / "roundtrip_points.json"
+    save_scenario(out, defn)
+    defn2 = load_scenario(out)
+    assert _scenario_equal(defn, defn2)
+
+
 def test_determinism_two_body() -> None:
     defn = load_scenario("examples/scenarios/two_body_orbit_v1.json")
     state1, model1, integrator1, dt1, steps1, _ = scenario_to_runtime(defn)

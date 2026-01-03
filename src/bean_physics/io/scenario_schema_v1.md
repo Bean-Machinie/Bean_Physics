@@ -30,8 +30,9 @@ This schema defines a declarative JSON format for reproducible simulations.
       - `point_masses` (array[K])
       - `inertia_body` (array[3][3] or array[M][3][3], optional)
     - `source` (array[M], optional template metadata):
-      - `kind` ("box" or "sphere")
+      - `kind` ("box", "sphere", or "points")
       - `params` (`{"size":[sx,sy,sz]}` or `{"radius": r}`)
+      - `points` (`[{mass, pos}]`, required when `kind = "points"`)
       - `mass` (float, should match `mass[i]`)
 
 ## Models/forces

@@ -31,9 +31,11 @@ from .panels.objects_utils import (
     remove_particle,
     remove_rigid_body,
     rigid_body_shapes,
+    rigid_body_points_body,
 )
 from .inspector import ObjectInspector
 from .recording_utils import build_metadata, make_recording_paths, video_filename
+from ..core.math.quat import quat_to_rotmat
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -357,6 +359,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._controller.rigid_body_quat(),
             rigid_body_shapes(self._session.scenario_def),
         )
+        self._update_rigid_body_points()
 
     def _update_action_state(self) -> None:
         loaded = self._controller.runtime is not None
@@ -433,6 +436,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if obj is None:
             self._viewport.set_selected_particles([])
             self._viewport.set_selected_rigid_body(None)
+            self._viewport.set_rigid_body_points(np.zeros((0, 3), dtype=np.float32))
             self._inspector.set_target(self._session.scenario_def, None)
             return
         if obj.type == "particle":
@@ -444,6 +448,7 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self._viewport.set_selected_particles([])
             self._viewport.set_selected_rigid_body(None)
+        self._update_rigid_body_points()
         if self._inspector.isVisible():
             self._inspector.set_target(self._session.scenario_def, obj)
 
@@ -501,7 +506,7 @@ class MainWindow(QtWidgets.QMainWindow):
             obj = ObjectRef(type="force", index=index, subtype="nbody_gravity")
             self._after_force_change(obj)
             return
-        if obj_type == "rigid_body" and subtype in {"box", "sphere"}:
+        if obj_type == "rigid_body" and subtype in {"box", "sphere", "points"}:
             index = add_rigid_body_template(self._session.scenario_def, subtype)
             self._session.mark_dirty()
             self._controller.load_definition(self._session.scenario_def)
@@ -569,6 +574,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_action_state()
         self._update_status()
         self._update_window_title()
+
+    def _update_rigid_body_points(self) -> None:
+        obj = self._objects_panel.selected_object()
+        if (
+            obj is None
+            or obj.type != "rigid_body"
+            or self._session.scenario_def is None
+            or self._controller.runtime is None
+            or self._controller.runtime.state.rigid_bodies is None
+        ):
+            self._viewport.set_rigid_body_points(np.zeros((0, 3), dtype=np.float32))
+            return
+        points_body = rigid_body_points_body(self._session.scenario_def, obj.index)
+        if points_body.size == 0:
+            self._viewport.set_rigid_body_points(np.zeros((0, 3), dtype=np.float32))
+            return
+        pos = self._controller.rigid_body_positions()
+        quat = self._controller.rigid_body_quat()
+        if obj.index >= pos.shape[0]:
+            self._viewport.set_rigid_body_points(np.zeros((0, 3), dtype=np.float32))
+            return
+        rot = quat_to_rotmat(quat[obj.index].astype(np.float64, copy=False))
+        points_world = points_body @ rot.T + pos[obj.index]
+        self._viewport.set_rigid_body_points(points_world.astype(np.float32, copy=False))
 
     def _on_frame_all(self) -> None:
         particles = self._controller.particle_positions()

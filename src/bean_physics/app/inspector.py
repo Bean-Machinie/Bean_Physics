@@ -17,6 +17,7 @@ from .panels.objects_utils import (
     particle_summary,
     rigid_body_summary,
 )
+from ..core.rigid_body.mass_properties import rigid_body_from_points, shift_points_to_com
 
 
 class ObjectInspector(QtWidgets.QDialog):
@@ -28,6 +29,7 @@ class ObjectInspector(QtWidgets.QDialog):
         self.setModal(False)
         self._defn: dict | None = None
         self._obj: ObjectRef | None = None
+        self._updating_points = False
 
         self._stack = QtWidgets.QStackedWidget(self)
         self._page_empty = QtWidgets.QWidget()
@@ -74,6 +76,7 @@ class ObjectInspector(QtWidgets.QDialog):
         self._rb_kind = QtWidgets.QComboBox(self)
         self._rb_kind.addItem("Box", "box")
         self._rb_kind.addItem("Sphere", "sphere")
+        self._rb_kind.addItem("Points", "points")
         self._rb_kind.currentIndexChanged.connect(self._on_rigid_kind_changed)
         self._rb_size = _vector_fields(min_value=1e-6)
         self._rb_radius = QtWidgets.QDoubleSpinBox(self)
@@ -89,7 +92,47 @@ class ObjectInspector(QtWidgets.QDialog):
         self._rb_quat = _quat_fields()
         self._rb_omega = _vector_fields()
         self._rb_inertia = _vector_fields(read_only=True)
-        rigid_form.addRow("Template", self._rb_kind)
+        self._rb_points_widget = QtWidgets.QWidget(self)
+        points_layout = QtWidgets.QVBoxLayout(self._rb_points_widget)
+        points_layout.setContentsMargins(0, 0, 0, 0)
+        self._rb_points_table = QtWidgets.QTableWidget(0, 4, self)
+        self._rb_points_table.setHorizontalHeaderLabels(["mass", "x", "y", "z"])
+        self._rb_points_table.horizontalHeader().setStretchLastSection(True)
+        self._rb_points_table.verticalHeader().setVisible(False)
+        self._rb_points_table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self._rb_points_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self._rb_points_table.cellChanged.connect(self._on_points_changed)
+        points_layout.addWidget(self._rb_points_table)
+        points_buttons = QtWidgets.QHBoxLayout()
+        self._rb_points_add = QtWidgets.QPushButton("Add Point", self)
+        self._rb_points_remove = QtWidgets.QPushButton("Remove Selected", self)
+        self._rb_points_recenter = QtWidgets.QPushButton("Recenter to CoM", self)
+        self._rb_points_add.clicked.connect(self._on_add_point)
+        self._rb_points_remove.clicked.connect(self._on_remove_point)
+        self._rb_points_recenter.clicked.connect(self._on_recenter_points)
+        points_buttons.addWidget(self._rb_points_add)
+        points_buttons.addWidget(self._rb_points_remove)
+        points_buttons.addWidget(self._rb_points_recenter)
+        points_buttons.addStretch(1)
+        points_layout.addLayout(points_buttons)
+
+        self._rb_points_mass = QtWidgets.QDoubleSpinBox(self)
+        self._rb_points_mass.setRange(0.0, 1e12)
+        self._rb_points_mass.setDecimals(6)
+        self._rb_points_mass.setReadOnly(True)
+        self._rb_points_com = _vector_fields(read_only=True)
+        self._rb_points_inertia = _matrix_fields(read_only=True)
+        points_layout.addLayout(_form_row("Total Mass", self._rb_points_mass))
+        points_layout.addLayout(_form_row("CoM (body)", _vector_widget(self._rb_points_com)))
+        points_layout.addLayout(
+            _form_row("Inertia (body)", _matrix_widget(self._rb_points_inertia))
+        )
+
+        rigid_form.addRow("Source Kind", self._rb_kind)
         rigid_form.addRow("Size", _vector_widget(self._rb_size))
         rigid_form.addRow("Radius", self._rb_radius)
         rigid_form.addRow("Mass", self._rb_mass)
@@ -98,6 +141,7 @@ class ObjectInspector(QtWidgets.QDialog):
         rigid_form.addRow("Quat (w,x,y,z)", _vector_widget(self._rb_quat))
         rigid_form.addRow("Omega body", _vector_widget(self._rb_omega))
         rigid_form.addRow("Inertia diag", _vector_widget(self._rb_inertia))
+        rigid_form.addRow("Points", self._rb_points_widget)
         self._stack.addWidget(self._rigid_page)
 
         self._btn_apply = QtWidgets.QPushButton("Apply", self)
@@ -157,7 +201,7 @@ class ObjectInspector(QtWidgets.QDialog):
             kind = source.get("kind", "box")
             params = source.get("params", {})
             self._rb_kind.setCurrentIndex(
-                0 if kind == "box" else 1
+                0 if kind == "box" else (1 if kind == "sphere" else 2)
             )
             size = params.get("size", [1.0, 1.0, 1.0])
             _set_vector(self._rb_size, size[0], size[1], size[2])
@@ -170,6 +214,12 @@ class ObjectInspector(QtWidgets.QDialog):
             inertia = summary["inertia_body"]
             inertia_diag = np.diag(inertia)
             _set_vector(self._rb_inertia, inertia_diag[0], inertia_diag[1], inertia_diag[2])
+            if kind == "points":
+                points = source.get("points")
+                if points is None:
+                    points = params.get("points", [])
+                self._load_points_table(points)
+                self._update_points_derived()
             self._on_rigid_kind_changed()
             self._stack.setCurrentWidget(self._rigid_page)
             self._set_enabled(True)
@@ -197,7 +247,15 @@ class ObjectInspector(QtWidgets.QDialog):
             *self._rb_quat,
             *self._rb_omega,
             *self._rb_inertia,
+            self._rb_points_table,
+            self._rb_points_add,
+            self._rb_points_remove,
+            self._rb_points_recenter,
+            self._rb_points_mass,
+            *self._rb_points_com,
         ]
+        for row in self._rb_points_inertia:
+            widgets.extend(row)
         for field in widgets:
             field.setEnabled(enabled)
         self._btn_apply.setEnabled(enabled)
@@ -232,14 +290,19 @@ class ObjectInspector(QtWidgets.QDialog):
                 kind = self._rb_kind.currentData()
                 if kind == "box":
                     params = {"size": self._vector_values(self._rb_size)}
-                else:
+                    mass_val = self._rb_mass.value()
+                elif kind == "sphere":
                     params = {"radius": self._rb_radius.value()}
+                    mass_val = self._rb_mass.value()
+                else:
+                    params = {"points": self._points_from_table()}
+                    mass_val = self._rb_points_mass.value()
                 apply_rigid_body_edit(
                     self._defn,
                     self._obj.index,
                     kind,
                     params,
-                    self._rb_mass.value(),
+                    mass_val,
                     self._vector_values(self._rb_pos),
                     self._vector_values(self._rb_vel),
                     self._quat_values(self._rb_quat),
@@ -262,9 +325,99 @@ class ObjectInspector(QtWidgets.QDialog):
     def _on_rigid_kind_changed(self) -> None:
         kind = self._rb_kind.currentData()
         is_box = kind == "box"
+        is_sphere = kind == "sphere"
+        is_points = kind == "points"
         for widget in self._rb_size:
             widget.setVisible(is_box)
-        self._rb_radius.setVisible(not is_box)
+        self._rb_radius.setVisible(is_sphere)
+        self._rb_mass.setVisible(not is_points)
+        self._rb_points_widget.setVisible(is_points)
+        if is_points:
+            self._update_points_derived()
+
+    def _load_points_table(self, points: list[dict[str, object]]) -> None:
+        self._updating_points = True
+        try:
+            self._rb_points_table.setRowCount(0)
+            for point in points:
+                self._append_point_row(point.get("mass", 1.0), point.get("pos", [0.0, 0.0, 0.0]))
+        finally:
+            self._updating_points = False
+
+    def _append_point_row(self, mass: object, pos: object) -> None:
+        row = self._rb_points_table.rowCount()
+        self._rb_points_table.insertRow(row)
+        entries = [mass, *pos]
+        for col, value in enumerate(entries):
+            item = QtWidgets.QTableWidgetItem(str(value))
+            self._rb_points_table.setItem(row, col, item)
+
+    def _points_from_table(self) -> list[dict[str, object]]:
+        points = []
+        for row in range(self._rb_points_table.rowCount()):
+            mass_item = self._rb_points_table.item(row, 0)
+            coords = [
+                self._rb_points_table.item(row, col) for col in (1, 2, 3)
+            ]
+            if mass_item is None or any(item is None for item in coords):
+                continue
+            points.append(
+                {
+                    "mass": float(mass_item.text()),
+                    "pos": [float(item.text()) for item in coords],
+                }
+            )
+        if not points:
+            raise ValueError("points list must not be empty")
+        return points
+
+    def _update_points_derived(self) -> None:
+        if self._updating_points:
+            return
+        try:
+            points = self._points_from_table()
+        except Exception:
+            return
+        masses = np.array([p["mass"] for p in points], dtype=np.float64)
+        positions = np.array([p["pos"] for p in points], dtype=np.float64)
+        total_mass, com, inertia = rigid_body_from_points(positions, masses)
+        self._rb_points_mass.setValue(float(total_mass))
+        _set_vector(self._rb_points_com, com[0], com[1], com[2])
+        _set_matrix(self._rb_points_inertia, inertia)
+        inertia_diag = np.diag(inertia)
+        _set_vector(self._rb_inertia, inertia_diag[0], inertia_diag[1], inertia_diag[2])
+
+    def _on_points_changed(self) -> None:
+        self._update_points_derived()
+
+    def _on_add_point(self) -> None:
+        self._append_point_row(1.0, [0.0, 0.0, 0.0])
+        self._update_points_derived()
+
+    def _on_remove_point(self) -> None:
+        row = self._rb_points_table.currentRow()
+        if row < 0:
+            return
+        self._rb_points_table.removeRow(row)
+        self._update_points_derived()
+
+    def _on_recenter_points(self) -> None:
+        points = self._points_from_table()
+        masses = np.array([p["mass"] for p in points], dtype=np.float64)
+        positions = np.array([p["pos"] for p in points], dtype=np.float64)
+        shifted, _ = shift_points_to_com(positions, masses)
+        self._updating_points = True
+        try:
+            for row in range(self._rb_points_table.rowCount()):
+                for col, value in enumerate(shifted[row], start=1):
+                    item = self._rb_points_table.item(row, col)
+                    if item is None:
+                        item = QtWidgets.QTableWidgetItem()
+                        self._rb_points_table.setItem(row, col, item)
+                    item.setText(f"{value:.6g}")
+        finally:
+            self._updating_points = False
+        self._update_points_derived()
 
     @staticmethod
     def _vector_values(fields: Sequence[QtWidgets.QDoubleSpinBox]) -> list[float]:
@@ -298,12 +451,45 @@ def _vector_widget(fields: Sequence[QtWidgets.QDoubleSpinBox]) -> QtWidgets.QWid
     return widget
 
 
+def _matrix_fields(
+    read_only: bool = False,
+) -> tuple[
+    tuple[QtWidgets.QDoubleSpinBox, QtWidgets.QDoubleSpinBox, QtWidgets.QDoubleSpinBox],
+    tuple[QtWidgets.QDoubleSpinBox, QtWidgets.QDoubleSpinBox, QtWidgets.QDoubleSpinBox],
+    tuple[QtWidgets.QDoubleSpinBox, QtWidgets.QDoubleSpinBox, QtWidgets.QDoubleSpinBox],
+]:
+    return (
+        _vector_fields(read_only=read_only),
+        _vector_fields(read_only=read_only),
+        _vector_fields(read_only=read_only),
+    )
+
+
+def _matrix_widget(
+    fields: Sequence[Sequence[QtWidgets.QDoubleSpinBox]],
+) -> QtWidgets.QWidget:
+    widget = QtWidgets.QWidget()
+    layout = QtWidgets.QVBoxLayout(widget)
+    layout.setContentsMargins(0, 0, 0, 0)
+    for row in fields:
+        layout.addWidget(_vector_widget(row))
+    return widget
+
+
 def _set_vector(
     fields: Sequence[QtWidgets.QDoubleSpinBox], x: float, y: float, z: float
 ) -> None:
     fields[0].setValue(x)
     fields[1].setValue(y)
     fields[2].setValue(z)
+
+
+def _set_matrix(
+    fields: Sequence[Sequence[QtWidgets.QDoubleSpinBox]], mat: np.ndarray
+) -> None:
+    mat = np.asarray(mat, dtype=np.float64)
+    for i in range(3):
+        _set_vector(fields[i], mat[i, 0], mat[i, 1], mat[i, 2])
 
 
 def _quat_fields() -> tuple[
@@ -329,3 +515,11 @@ def _set_quat(
     fields[1].setValue(x)
     fields[2].setValue(y)
     fields[3].setValue(z)
+
+
+def _form_row(label: str, widget: QtWidgets.QWidget) -> QtWidgets.QHBoxLayout:
+    layout = QtWidgets.QHBoxLayout()
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.addWidget(QtWidgets.QLabel(label))
+    layout.addWidget(widget, 1)
+    return layout
