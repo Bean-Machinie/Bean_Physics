@@ -1,82 +1,241 @@
 {
-  "schema_version": 1,
-  "units": {
-    "preset": "ASTRO",
-    "enabled": true
-  },
-  "metadata": {
-    "name": "Sun + Mercury/Venus/Earth/Mars/Jupiter (ASTRO)",
-    "description": "Solar system subset with circular orbits in AU/day/Msun. Visual scales use radius in AU (assumes unit-radius meshes)."
-  },
-  "simulation": {
-    "dt": 0.25,
-    "steps": 2922,
-    "integrator": "velocity_verlet"
-  },
   "entities": {
     "particles": {
       "mass": [
         1.0,
         1.66e-07,
-        2.447e-06,
-        3.003e-06,
+        2e-06,
+        3e-06,
         3.227e-07,
         0.0009545
       ],
       "pos": [
-        [0.0, 0.0, 0.0],
-        [0.387098, 0.0, 0.0],
-        [0.723332, 0.0, 0.0],
-        [1.0, 0.0, 0.0],
-        [1.523679, 0.0, 0.0],
-        [5.2044, 0.0, 0.0]
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.387098,
+          0.0,
+          0.0
+        ],
+        [
+          0.723332,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.523679,
+          0.0,
+          0.0
+        ],
+        [
+          5.2044,
+          0.0,
+          0.0
+        ]
+      ],
+      "trail_enabled": [
+        false,
+        true,
+        true,
+        true,
+        true,
+        false
       ],
       "vel": [
-        [0.0, -7.30757832598088e-06, 0.0],
-        [0.0, 0.0276484619949438, 0.0],
-        [0.0, 0.0202261210547639, 0.0],
-        [0.0, 0.01720209895, 0.0],
-        [0.0, 0.0139358897062208, 0.0],
-        [0.0, 0.00754042990918141, 0.0]
+        [
+          0.0,
+          -7e-06,
+          0.0
+        ],
+        [
+          0.0,
+          0.027648,
+          0.0
+        ],
+        [
+          0.0,
+          0.020226,
+          0.0
+        ],
+        [
+          0.0,
+          0.017202,
+          0.0
+        ],
+        [
+          0.0,
+          0.013936,
+          0.0
+        ],
+        [
+          0.0,
+          0.00754042990918141,
+          0.0
+        ]
       ],
       "visual": [
         {
+          "color_tint": [
+            1.0,
+            1.0,
+            1.0
+          ],
           "kind": "mesh",
           "mesh_path": "../../models/sun.glb",
-          "scale": [0.00465474539672041, 0.00465474539672041, 0.00465474539672041],
-          "offset_body": [0.0, 0.0, 0.0],
-          "rotation_body_quat": [1.0, 0.0, 0.0, 0.0],
-          "color_tint": [1.0, 1.0, 1.0]
+          "offset_body": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation_body_quat": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": 1000000000.0
         },
-        null,
         {
+          "color_tint": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "kind": "mesh",
+          "mesh_path": "../../models/mercury.glb",
+          "offset_body": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation_body_quat": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": 2000000000.0
+        },
+        {
+          "color_tint": [
+            1.0,
+            1.0,
+            1.0
+          ],
           "kind": "mesh",
           "mesh_path": "../../models/venus.glb",
-          "scale": [4.04537843465442e-05, 4.04537843465442e-05, 4.04537843465442e-05],
-          "offset_body": [0.0, 0.0, 0.0],
-          "rotation_body_quat": [1.0, 0.0, 0.0, 0.0],
-          "color_tint": [1.0, 1.0, 1.0]
+          "offset_body": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation_body_quat": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": 2000000000.0
         },
         {
+          "color_tint": [
+            1.0,
+            1.0,
+            1.0
+          ],
           "kind": "mesh",
           "mesh_path": "../../models/earth.glb",
-          "scale": [4.25875045559723e-05, 4.25875045559723e-05, 4.25875045559723e-05],
-          "offset_body": [0.0, 0.0, 0.0],
-          "rotation_body_quat": [1.0, 0.0, 0.0, 0.0],
-          "color_tint": [1.0, 1.0, 1.0]
+          "offset_body": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation_body_quat": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": 25000000.0
         },
-        null,
-        null
+        {
+          "color_tint": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "kind": "mesh",
+          "mesh_path": "../../models/mars.glb",
+          "offset_body": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation_body_quat": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": 800000000.0
+        },
+        {
+          "color_tint": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "kind": "mesh",
+          "mesh_path": "../../models/jupiter.glb",
+          "offset_body": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation_body_quat": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            4.673262,
+            4.673262,
+            4.673262
+          ]
+        }
       ]
     }
+  },
+  "metadata": {
+    "description": "Solar system subset with circular orbits in AU/day/Msun. Visual scales use radius in AU (assumes unit-radius meshes).",
+    "name": "Sun + Mercury/Venus/Earth/Mars/Jupiter (ASTRO)"
   },
   "models": [
     {
       "nbody_gravity": {
         "G": 0.00029591220828559093,
-        "softening": 0.0,
-        "chunk_size": null
+        "chunk_size": null,
+        "softening": 0.0
       }
     }
-  ]
+  ],
+  "schema_version": 1,
+  "simulation": {
+    "dt": 0.25,
+    "integrator": "velocity_verlet",
+    "steps": 2922
+  },
+  "units": {
+    "enabled": true,
+    "preset": "ASTRO"
+  }
 }
