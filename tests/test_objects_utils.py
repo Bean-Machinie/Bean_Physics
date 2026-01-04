@@ -140,3 +140,26 @@ def test_add_remove_rigid_body_template() -> None:
     assert summary["mass"] == 3.0
     remove_rigid_body(defn, idx)
     assert list_rigid_bodies(defn) == []
+
+
+def test_physical_radius_helpers() -> None:
+    session = ScenarioSession()
+    defn = session.new_default()
+    idx = add_particle(defn)
+    from bean_physics.app.panels.objects_utils import (
+        particle_radius_m,
+        set_particle_radius_m,
+        rigid_body_radius_m,
+        set_rigid_body_radius_m,
+    )
+
+    assert particle_radius_m(defn, idx) is None
+    set_particle_radius_m(defn, idx, 6_378_137.0)
+    assert particle_radius_m(defn, idx) == 6_378_137.0
+    set_particle_radius_m(defn, idx, 0.0)
+    assert particle_radius_m(defn, idx) is None
+
+    rb_idx = add_rigid_body_template(defn, "sphere")
+    assert rigid_body_radius_m(defn, rb_idx) is None
+    set_rigid_body_radius_m(defn, rb_idx, 1737_400.0)
+    assert rigid_body_radius_m(defn, rb_idx) == 1_737_400.0

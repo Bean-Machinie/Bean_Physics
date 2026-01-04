@@ -37,6 +37,10 @@ def load_mesh_data(path: str | Path) -> dict[str, Any]:
     chunks, report = _build_chunks(geometries, str(path), fmt, is_scene)
     _print_report(report)
 
+    mesh_radius_units = 0.0
+    for entry in report.get("geometries", []):
+        mesh_radius_units = max(mesh_radius_units, float(entry.get("mesh_radius_units", 0.0)))
+    report["mesh_radius_units"] = mesh_radius_units
     return {"chunks": chunks, "report": report}
 
 
@@ -111,6 +115,7 @@ def _build_chunk(mesh: Any, name: str) -> tuple[dict[str, Any], dict[str, Any]]:
         chosen = "using material base color"
 
     vertices, _ = _center_vertices(vertices)
+    mesh_radius_units = _mesh_radius_units(vertices)
     stats = _color_stats(colors) if colors is not None else None
     if colors is None:
         warnings.append("No vertex colors or texture/UVs found; rendering untextured.")
@@ -125,6 +130,7 @@ def _build_chunk(mesh: Any, name: str) -> tuple[dict[str, Any], dict[str, Any]]:
         "faces": faces,
         "vertex_colors": colors,
         "chosen_path": chosen,
+        "mesh_radius_units": mesh_radius_units,
     }
     entry = {
         "name": name,
@@ -143,6 +149,7 @@ def _build_chunk(mesh: Any, name: str) -> tuple[dict[str, Any], dict[str, Any]]:
         "to_color_used": to_color_used,
         "to_color_error": to_color_error,
         "baked_colors_stats": stats,
+        "mesh_radius_units": mesh_radius_units,
         "warnings": warnings,
     }
     return chunk, entry
@@ -237,6 +244,20 @@ def _center_vertices(vertices: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     maxs = vertices.max(axis=0)
     center = (mins + maxs) * 0.5
     return vertices - center, center
+
+
+def _mesh_radius_units(vertices: np.ndarray) -> float:
+    if vertices.size == 0:
+        return 0.0
+    return float(np.max(np.linalg.norm(vertices, axis=1)))
+
+
+def scale_factor_for_radius(mesh_radius_units: float, radius_m: float) -> float:
+    if mesh_radius_units <= 0.0:
+        raise ValueError("mesh_radius_units must be > 0")
+    if radius_m <= 0.0:
+        raise ValueError("radius_m must be > 0")
+    return float(radius_m) / float(mesh_radius_units)
 
 
 def _unroll_vertices(

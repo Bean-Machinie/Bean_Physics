@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import exp, log, pi, sqrt
+from math import ceil, exp, log, pi, sqrt
 
 import numpy as np
 
@@ -155,9 +155,12 @@ def preview_velocity_at_time(
     target_type: str,
     target_index: int,
     impulse_events: list[ImpulseEvent] | None = None,
+    max_steps: int = 20000,
 ) -> np.ndarray:
     if t < 0.0:
         raise ValueError("t must be >= 0")
+    if max_steps <= 0:
+        raise ValueError("max_steps must be > 0")
     preview = state.clone()
     schedule = None
     if impulse_events:
@@ -166,6 +169,10 @@ def preview_velocity_at_time(
         )
     current_t = 0.0
     step = 0
+    if t > 0.0 and dt > 0.0:
+        estimated_steps = int(ceil(t / dt))
+        if estimated_steps > max_steps:
+            dt = t / max_steps
     while current_t < t:
         next_dt = min(dt, t - current_t)
         prev_t = current_t

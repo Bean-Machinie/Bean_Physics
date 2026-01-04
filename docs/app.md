@@ -41,3 +41,8 @@ Mission Analysis:
 
 - The `Mission Analysis` dock provides a Hohmann planner for circular orbits.
 - Set central body, orbits, timing, and spacecraft parameters, then click `Apply to Scenario` to generate impulse events.
+
+Visual scale:
+
+- Set `Physical radius (m)` on a body to make mesh scale match real size.
+- In Visual controls, choose `Match physical radius` to scale meshes deterministically.

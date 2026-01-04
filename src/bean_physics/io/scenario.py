@@ -197,6 +197,8 @@ def _validate_scenario_v1(data: dict[str, Any]) -> ScenarioDefinition:
             raise ValueError("particles.mass must have length N")
         if "visual" in p:
             _validate_visual_list(p["visual"], len(p["mass"]), "particles.visual")
+        if "physical" in p:
+            _validate_physical_list(p["physical"], len(p["mass"]), "particles.physical")
 
     id_map: dict[str, tuple[str, int]] = {}
     if "particles" in entities:
@@ -216,6 +218,8 @@ def _validate_scenario_v1(data: dict[str, Any]) -> ScenarioDefinition:
             raise ValueError("rigid_bodies.mass must have length M")
         if "visual" in r:
             _validate_visual_list(r["visual"], len(r["mass"]), "rigid_bodies.visual")
+        if "physical" in r:
+            _validate_physical_list(r["physical"], len(r["mass"]), "rigid_bodies.physical")
         if "ids" in r:
             _validate_ids(r["ids"], len(r["mass"]), "rigid_bodies.ids", id_map, "rigid_body")
 
@@ -378,6 +382,23 @@ def _validate_visual_block(entry: dict[str, Any], ctx: str) -> None:
         raise ValueError(f"{ctx}.rotation_body_quat must have length 4")
     if "color_tint" in entry and len(entry["color_tint"]) != 3:
         raise ValueError(f"{ctx}.color_tint must have length 3")
+    if "scale_mode" in entry and entry["scale_mode"] not in {"match_radius", "manual"}:
+        raise ValueError(f"{ctx}.scale_mode must be 'match_radius' or 'manual'")
+    if "mesh_radius_units" in entry and float(entry["mesh_radius_units"]) <= 0.0:
+        raise ValueError(f"{ctx}.mesh_radius_units must be > 0")
+
+
+def _validate_physical_list(values: Any, expected_len: int, ctx: str) -> None:
+    if not isinstance(values, list) or len(values) != expected_len:
+        raise ValueError(f"{ctx} must be a list of length {expected_len}")
+    for idx, entry in enumerate(values):
+        if entry is None:
+            continue
+        if not isinstance(entry, dict):
+            raise ValueError(f"{ctx}[{idx}] must be an object")
+        radius = entry.get("radius_m")
+        if radius is not None and float(radius) <= 0.0:
+            raise ValueError(f"{ctx}[{idx}].radius_m must be > 0")
 
 
 def _parse_impulse_events(

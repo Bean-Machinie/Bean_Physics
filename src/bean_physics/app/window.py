@@ -29,9 +29,11 @@ from .panels.objects_utils import (
     list_rigid_bodies,
     particle_trail_enabled,
     particle_visual,
+    particle_radius_m,
     remove_force,
     remove_particle,
     remove_rigid_body,
+    rigid_body_radius_m,
     rigid_body_trail_enabled,
     rigid_body_visual,
     rigid_body_shapes,
@@ -576,7 +578,8 @@ class MainWindow(QtWidgets.QMainWindow):
         visuals: list[dict[str, object] | None] = []
         for obj in particles:
             visual = particle_visual(self._session.scenario_def, obj.index)
-            visuals.append(self._resolve_visual_spec(visual))
+            radius_m = particle_radius_m(self._session.scenario_def, obj.index)
+            visuals.append(self._resolve_visual_spec(visual, radius_m))
         return visuals
 
     def _rigid_body_visual_specs(self) -> list[dict[str, object] | None]:
@@ -586,7 +589,8 @@ class MainWindow(QtWidgets.QMainWindow):
         visuals: list[dict[str, object] | None] = []
         for obj in rigid_bodies:
             visual = rigid_body_visual(self._session.scenario_def, obj.index)
-            visuals.append(self._resolve_visual_spec(visual))
+            radius_m = rigid_body_radius_m(self._session.scenario_def, obj.index)
+            visuals.append(self._resolve_visual_spec(visual, radius_m))
         return visuals
 
     @staticmethod
@@ -602,7 +606,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return [1.0, 1.0, 1.0]
 
     def _resolve_visual_spec(
-        self, visual: dict[str, object] | None
+        self, visual: dict[str, object] | None, radius_m: float | None
     ) -> dict[str, object] | None:
         if visual is None:
             return None
@@ -619,6 +623,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(f"Mesh not found: {resolved}")
             return {
                 "scale": self._normalize_visual_scale(visual.get("scale", 1.0)),
+                "scale_mode": visual.get("scale_mode", "manual"),
+                "radius_m": radius_m,
                 "offset_body": to_si(
                     visual.get("offset_body", [0.0, 0.0, 0.0]),
                     "length",
@@ -634,6 +640,9 @@ class MainWindow(QtWidgets.QMainWindow):
         return {
             "mesh_path": str(resolved),
             "scale": self._normalize_visual_scale(visual.get("scale", 1.0)),
+            "scale_mode": visual.get("scale_mode", "match_radius"),
+            "radius_m": radius_m,
+            "mesh_radius_units": visual.get("mesh_radius_units"),
             "offset_body": to_si(
                 visual.get("offset_body", [0.0, 0.0, 0.0]),
                 "length",

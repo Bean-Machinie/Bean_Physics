@@ -18,19 +18,23 @@ from .panels.objects_utils import (
     particle_summary,
     particle_trail_enabled,
     particle_visual,
+    particle_radius_m,
     rigid_body_force_points,
     rigid_body_summary,
     rigid_body_trail_enabled,
     rigid_body_visual,
+    rigid_body_radius_m,
     set_rigid_body_force_points,
     set_particle_visual,
+    set_particle_radius_m,
     set_particle_trail_enabled,
     set_rigid_body_visual,
+    set_rigid_body_radius_m,
     set_rigid_body_trail_enabled,
 )
 from ..core.rigid_body.mass_properties import rigid_body_from_points, shift_points_to_com
 from ..io.units import UnitsConfig, label_for
-from .visual_assets import loader_available
+from .visual_assets import loader_available, load_mesh_data
 
 
 class ObjectInspector(QtWidgets.QDialog):
@@ -55,7 +59,7 @@ class ObjectInspector(QtWidgets.QDialog):
         self._pos = _vector_fields()
         self._vel = _vector_fields()
         self._mass = QtWidgets.QDoubleSpinBox(self)
-        self._mass.setRange(1e-12, 1e12)
+        self._mass.setRange(1e-12, 1e30)
         self._mass.setDecimals(12)
         self._mass.setSingleStep(1e-6)
         self._mass.setValue(1.0)
@@ -64,6 +68,11 @@ class ObjectInspector(QtWidgets.QDialog):
         self._particle_form.addRow("Position", self._particle_pos_widget)
         self._particle_form.addRow("Velocity", self._particle_vel_widget)
         self._particle_form.addRow("Mass", self._mass)
+        self._particle_radius = QtWidgets.QDoubleSpinBox(self)
+        self._particle_radius.setRange(0.0, 1e12)
+        self._particle_radius.setDecimals(6)
+        self._particle_radius.setValue(0.0)
+        self._particle_form.addRow("Physical radius (m)", self._particle_radius)
         self._particle_trail = QtWidgets.QCheckBox("Show Trail", self)
         self._particle_form.addRow("Trail", self._particle_trail)
         self._particle_visual = _build_visual_controls(self)
@@ -113,7 +122,7 @@ class ObjectInspector(QtWidgets.QDialog):
         self._rb_radius.setDecimals(6)
         self._rb_radius.setValue(0.5)
         self._rb_mass = QtWidgets.QDoubleSpinBox(self)
-        self._rb_mass.setRange(1e-12, 1e12)
+        self._rb_mass.setRange(1e-12, 1e30)
         self._rb_mass.setDecimals(12)
         self._rb_mass.setSingleStep(1e-6)
         self._rb_mass.setValue(1.0)
@@ -151,7 +160,7 @@ class ObjectInspector(QtWidgets.QDialog):
         points_layout.addLayout(points_buttons)
 
         self._rb_points_mass = QtWidgets.QDoubleSpinBox(self)
-        self._rb_points_mass.setRange(0.0, 1e12)
+        self._rb_points_mass.setRange(0.0, 1e30)
         self._rb_points_mass.setDecimals(12)
         self._rb_points_mass.setReadOnly(True)
         self._rb_points_com = _vector_fields(read_only=True)
@@ -177,6 +186,11 @@ class ObjectInspector(QtWidgets.QDialog):
         self._rigid_form.addRow("Size", self._rb_size_widget)
         self._rigid_form.addRow("Radius", self._rb_radius)
         self._rigid_form.addRow("Mass", self._rb_mass)
+        self._rb_physical_radius = QtWidgets.QDoubleSpinBox(self)
+        self._rb_physical_radius.setRange(0.0, 1e12)
+        self._rb_physical_radius.setDecimals(6)
+        self._rb_physical_radius.setValue(0.0)
+        self._rigid_form.addRow("Physical radius (m)", self._rb_physical_radius)
         self._rigid_form.addRow("Position", self._rb_pos_widget)
         self._rigid_form.addRow("Velocity", self._rb_vel_widget)
         self._rigid_form.addRow("Quat (w,x,y,z)", self._rb_quat_widget)
@@ -272,11 +286,15 @@ class ObjectInspector(QtWidgets.QDialog):
             _set_vector(self._pos, summary["x"], summary["y"], summary["z"])
             _set_vector(self._vel, summary["vx"], summary["vy"], summary["vz"])
             self._mass.setValue(summary["mass"])
+            radius_m = particle_radius_m(self._defn, self._obj.index)
+            self._particle_radius.setValue(0.0 if radius_m is None else radius_m)
             self._particle_trail.setChecked(
                 particle_trail_enabled(self._defn, self._obj.index)
             )
             _set_visual_controls(
-                self._particle_visual, particle_visual(self._defn, self._obj.index)
+                self._particle_visual,
+                particle_visual(self._defn, self._obj.index),
+                radius_m=radius_m,
             )
             self._stack.setCurrentWidget(self._particle_page)
             self._set_enabled(True)
@@ -309,6 +327,8 @@ class ObjectInspector(QtWidgets.QDialog):
             _set_vector(self._rb_size, size[0], size[1], size[2])
             self._rb_radius.setValue(float(params.get("radius", 0.5)))
             self._rb_mass.setValue(summary["mass"])
+            rb_radius_m = rigid_body_radius_m(self._defn, self._obj.index)
+            self._rb_physical_radius.setValue(0.0 if rb_radius_m is None else rb_radius_m)
             _set_vector(self._rb_pos, summary["x"], summary["y"], summary["z"])
             _set_vector(self._rb_vel, summary["vx"], summary["vy"], summary["vz"])
             _set_quat(self._rb_quat, summary["qw"], summary["qx"], summary["qy"], summary["qz"])
@@ -320,7 +340,9 @@ class ObjectInspector(QtWidgets.QDialog):
                 rigid_body_trail_enabled(self._defn, self._obj.index)
             )
             _set_visual_controls(
-                self._rigid_visual, rigid_body_visual(self._defn, self._obj.index)
+                self._rigid_visual,
+                rigid_body_visual(self._defn, self._obj.index),
+                radius_m=rb_radius_m,
             )
             self._load_force_table(
                 rigid_body_force_points(self._defn, self._obj.index)
@@ -467,6 +489,7 @@ class ObjectInspector(QtWidgets.QDialog):
             self._particle_visual["attach"],
             self._particle_visual["clear"],
             self._particle_visual["scale"],
+            self._particle_visual["scale_mode"],
             *self._particle_visual["offset"],
             *self._particle_visual["rotation"],
             *self._particle_visual["color"],
@@ -475,9 +498,12 @@ class ObjectInspector(QtWidgets.QDialog):
             self._rigid_visual["attach"],
             self._rigid_visual["clear"],
             self._rigid_visual["scale"],
+            self._rigid_visual["scale_mode"],
             *self._rigid_visual["offset"],
             *self._rigid_visual["rotation"],
             *self._rigid_visual["color"],
+            self._particle_radius,
+            self._rb_physical_radius,
         ]
         for row in self._rb_points_inertia:
             widgets.extend(row)
@@ -497,6 +523,11 @@ class ObjectInspector(QtWidgets.QDialog):
                     self._mass.value(),
                 ]
                 apply_particle_edit(self._defn, self._obj.index, values)
+                set_particle_radius_m(
+                    self._defn,
+                    self._obj.index,
+                    float(self._particle_radius.value()),
+                )
                 set_particle_visual(
                     self._defn,
                     self._obj.index,
@@ -549,6 +580,11 @@ class ObjectInspector(QtWidgets.QDialog):
                     self._defn,
                     self._obj.index,
                     _visual_from_controls(self._rigid_visual, self._scenario_path),
+                )
+                set_rigid_body_radius_m(
+                    self._defn,
+                    self._obj.index,
+                    float(self._rb_physical_radius.value()),
                 )
                 set_rigid_body_trail_enabled(
                     self._defn,
@@ -787,9 +823,11 @@ class ObjectInspector(QtWidgets.QDialog):
         if not path:
             return
         controls["path"].setText(path)
+        _update_mesh_metrics(controls)
 
     def _on_clear_visual(self, controls: dict[str, object]) -> None:
         controls["path"].setText("")
+        _update_mesh_metrics(controls)
 
     @staticmethod
     def _vector_values(fields: Sequence[QtWidgets.QDoubleSpinBox]) -> list[float]:
@@ -939,16 +977,27 @@ def _build_visual_controls(parent: QtWidgets.QWidget) -> dict[str, object]:
     button_row.addWidget(clear)
     button_row.addStretch(1)
     scale = _scale_field(min_value=1e-6, max_value=1e12)
+    scale_mode = QtWidgets.QComboBox(parent)
+    scale_mode.addItem("Match physical radius", "match_radius")
+    scale_mode.addItem("Manual", "manual")
     offset = _vector_fields()
     rotation = _quat_fields()
     color = _color_fields()
+    mesh_radius_units = QtWidgets.QLabel("-", parent)
+    scale_factor = QtWidgets.QLabel("-", parent)
+    visual_radius = QtWidgets.QLabel("-", parent)
     scale.setValue(1.0)
+    scale_mode.setCurrentIndex(0)
     _set_vector(offset, 0.0, 0.0, 0.0)
     _set_quat(rotation, 1.0, 0.0, 0.0, 0.0)
     _set_vector(color, 1.0, 1.0, 1.0)
     layout.addRow("Path", path)
     layout.addRow("", _layout_widget(button_row))
+    layout.addRow("Scale mode", scale_mode)
     layout.addRow("Scale", scale)
+    layout.addRow("Mesh radius (units)", mesh_radius_units)
+    layout.addRow("Scale factor", scale_factor)
+    layout.addRow("Visual radius (m)", visual_radius)
     layout.addRow("Offset", _vector_widget(offset))
     layout.addRow("Rotation", _vector_widget(rotation))
     layout.addRow("Color Tint", _vector_widget(color))
@@ -958,23 +1007,36 @@ def _build_visual_controls(parent: QtWidgets.QWidget) -> dict[str, object]:
         "attach": attach,
         "clear": clear,
         "scale": scale,
+        "scale_mode": scale_mode,
         "offset": offset,
         "rotation": rotation,
         "color": color,
+        "mesh_radius_units": mesh_radius_units,
+        "scale_factor": scale_factor,
+        "visual_radius": visual_radius,
     }
 
 
 def _set_visual_controls(
-    controls: dict[str, object], visual: dict[str, object] | None
+    controls: dict[str, object],
+    visual: dict[str, object] | None,
+    radius_m: float | None = None,
 ) -> None:
     if visual is None:
         controls["path"].setText("")
         controls["scale"].setValue(1.0)
+        controls["scale_mode"].setCurrentIndex(0)
         _set_vector(controls["offset"], 0.0, 0.0, 0.0)
         _set_quat(controls["rotation"], 1.0, 0.0, 0.0, 0.0)
         _set_vector(controls["color"], 1.0, 1.0, 1.0)
+        controls["mesh_radius_units"].setText("-")
+        controls["scale_factor"].setText("-")
+        controls["visual_radius"].setText("-")
         return
     controls["path"].setText(str(visual.get("mesh_path", "")))
+    scale_mode = visual.get("scale_mode", "match_radius")
+    idx = controls["scale_mode"].findData(scale_mode)
+    controls["scale_mode"].setCurrentIndex(idx if idx >= 0 else 0)
     scale = visual.get("scale", 1.0)
     offset = visual.get("offset_body", [0.0, 0.0, 0.0])
     rotation = visual.get("rotation_body_quat", [1.0, 0.0, 0.0, 0.0])
@@ -989,6 +1051,7 @@ def _set_visual_controls(
     _set_vector(controls["offset"], offset[0], offset[1], offset[2])
     _set_quat(controls["rotation"], rotation[0], rotation[1], rotation[2], rotation[3])
     _set_vector(controls["color"], color[0], color[1], color[2])
+    _update_mesh_metrics(controls, radius_m=radius_m, visual=visual)
 
 
 def _visual_from_controls(
@@ -999,6 +1062,7 @@ def _visual_from_controls(
         return None
     mesh_path = _relativize_mesh_path(path, scenario_path)
     scale = float(controls["scale"].value())
+    scale_mode = controls["scale_mode"].currentData()
     offset = [field.value() for field in controls["offset"]]
     rotation = [field.value() for field in controls["rotation"]]
     color = [field.value() for field in controls["color"]]
@@ -1007,14 +1071,59 @@ def _visual_from_controls(
     if q_norm > 0:
         q = q / q_norm
     rotation = [float(v) for v in q]
-    return {
+    mesh_radius_units = _parse_label_float(controls["mesh_radius_units"].text())
+    visual = {
         "kind": "mesh",
         "mesh_path": mesh_path,
         "scale": scale,
+        "scale_mode": scale_mode if isinstance(scale_mode, str) else "manual",
         "offset_body": offset,
         "rotation_body_quat": rotation,
         "color_tint": color,
     }
+    if mesh_radius_units is not None:
+        visual["mesh_radius_units"] = mesh_radius_units
+    return visual
+
+
+def _parse_label_float(text: str) -> float | None:
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _update_mesh_metrics(
+    controls: dict[str, object],
+    radius_m: float | None = None,
+    visual: dict[str, object] | None = None,
+) -> None:
+    mesh_radius = None
+    if visual is not None:
+        mesh_radius = visual.get("mesh_radius_units")
+    if mesh_radius is None:
+        path = controls["path"].text().strip()
+        if path and loader_available():
+            try:
+                data = load_mesh_data(path)
+                report = data.get("report", {})
+                mesh_radius = report.get("mesh_radius_units")
+            except Exception:
+                mesh_radius = None
+    if mesh_radius is None:
+        controls["mesh_radius_units"].setText("-")
+        controls["scale_factor"].setText("mesh radius missing")
+        controls["visual_radius"].setText("-")
+        return
+    mesh_radius = float(mesh_radius)
+    controls["mesh_radius_units"].setText(f"{mesh_radius:.6g}")
+    if radius_m is None or radius_m <= 0.0:
+        controls["scale_factor"].setText("set radius_m")
+        controls["visual_radius"].setText("-")
+        return
+    scale_factor = radius_m / mesh_radius
+    controls["scale_factor"].setText(f"{scale_factor:.6g}")
+    controls["visual_radius"].setText(f"{radius_m:.6g}")
 
 
 def _relativize_mesh_path(path: str, scenario_path: Path | None) -> str:

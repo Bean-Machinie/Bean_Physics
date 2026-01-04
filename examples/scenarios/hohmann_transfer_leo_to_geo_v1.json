@@ -1,78 +1,143 @@
 {
-  "schema_version": 1,
-  "metadata": {
-    "name": "Hohmann transfer LEO to GEO (v1)",
-    "description": "Start in LEO circular, instantaneous prograde burn raises apoapsis to GEO, coast to apogee, second burn circularizes.",
-    "notes": {
-      "viewport": "Enable trail on sc (long length), Frame All, optionally Follow Selection."
-    },
-    "mission_analysis": {
-      "kind": "hohmann",
-      "hohmann": {
-        "central_body_id": "earth",
-        "spacecraft_id": "sc",
-        "r1_mode": "Altitude above body radius",
-        "r2_mode": "Absolute radius",
-        "body_radius_m": 6378137.0,
-        "r1_altitude_m": 300000.0,
-        "r1_radius_m": 6678137.0,
-        "r2_altitude_m": 35786000.0,
-        "r2_radius_m": 42164000.0,
-        "coast_time_s": 0.0,
-        "burn2_mode": "Auto at apoapsis",
-        "burn2_time_s": 0.0,
-        "dry_mass_kg": 1000.0,
-        "prop_mass_kg": 0.0,
-        "isp_s": 300.0,
-        "thrust_n": 0.0
-      }
-    }
-  },
-  "units": {
-    "preset": "SI",
-    "enabled": true
-  },
-  "simulation": {
-    "dt": 2.0,
-    "steps": 30000,
-    "integrator": "velocity_verlet"
-  },
   "entities": {
     "particles": {
+      "ids": [
+        "earth",
+        "sc"
+      ],
+      "mass": [
+        5.97219e+24,
+        1000.0
+      ],
+      "physical": [
+        {
+          "radius_m": 6378137.0
+        },
+        null
+      ],
       "pos": [
-        [0.0, 0.0, 0.0],
-        [6678137.0, 0.0, 0.0]
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          6678137.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "trail_enabled": [
+        false,
+        true
       ],
       "vel": [
-        [0.0, 0.0, 0.0],
-        [0.0, 7725.760232077137, 0.0]
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          7725.774142390972,
+          0.0
+        ]
       ],
-      "mass": [5.97219e24, 1000.0],
-      "ids": ["earth", "sc"],
-      "trail_enabled": [false, true]
+      "visual": [
+        {
+          "color_tint": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "kind": "mesh",
+          "mesh_path": "E:/Space_App/Bean_Physics/models/earth.glb",
+          "mesh_radius_units": 100.0,
+          "offset_body": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation_body_quat": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": 1.0,
+          "scale_mode": "match_radius"
+        },
+        null
+      ]
+    }
+  },
+  "impulse_events": [
+    {
+      "delta_v_world": [
+        -2353.8035297141755,
+        -586.3409619724947,
+        0.0
+      ],
+      "label": "Burn 1: dv=2425.734 m/s @ t=7000.0s",
+      "t": 7000.0,
+      "target": "sc"
+    },
+    {
+      "delta_v_world": [
+        1423.6213770911688,
+        353.3892636421905,
+        0.0
+      ],
+      "label": "Burn 2: dv=1466.827 m/s @ t=25990.1s",
+      "t": 25990.097546251305,
+      "target": "sc"
+    }
+  ],
+  "metadata": {
+    "description": "Start in LEO circular, instantaneous prograde burn raises apoapsis to GEO, coast to apogee, second burn circularizes.",
+    "mission_analysis": {
+      "hohmann": {
+        "body_radius_m": 6378137.0,
+        "burn2_mode": "Auto at apoapsis",
+        "burn2_time_s": 0.0,
+        "central_body_id": "earth",
+        "coast_time_s": 7000.0,
+        "dry_mass_kg": 1000.0,
+        "isp_s": 300.0,
+        "prop_mass_kg": 0.0,
+        "r1_altitude_m": 300000.0,
+        "r1_mode": "Altitude above body radius",
+        "r1_radius_m": 6678137.0,
+        "r2_altitude_m": 35786000.0,
+        "r2_mode": "Absolute radius",
+        "r2_radius_m": 42164000.0,
+        "spacecraft_id": "sc",
+        "thrust_n": 0.0
+      },
+      "kind": "hohmann"
+    },
+    "name": "Hohmann transfer LEO to GEO (v1)",
+    "notes": {
+      "viewport": "Enable trail on sc (long length), Frame All, optionally Follow Selection."
     }
   },
   "models": [
     {
       "nbody_gravity": {
-        "G": 6.67430e-11,
-        "softening": 0.0,
-        "chunk_size": null
+        "G": 6.6743e-11,
+        "chunk_size": null,
+        "softening": 0.0
       }
     }
   ],
-  "impulse_events": [
-    {
-      "t": 0.0,
-      "target": "sc",
-      "delta_v_world": [0.0, 2425.729908946305, 0.0],
-      "label": "Burn 1: raise apoapsis to GEO"
-    },
-    {
-      "t": 18990.13173812482,
-      "target": "sc",
-      "delta_v_world": [0.0, -1466.8244779445927, 0.0],
-      "label": "Burn 2: circularize at GEO"
-    }
-  ]
+  "schema_version": 1,
+  "simulation": {
+    "dt": 2.0,
+    "integrator": "velocity_verlet",
+    "steps": 216000
+  },
+  "units": {
+    "enabled": true,
+    "preset": "SI"
+  }
 }

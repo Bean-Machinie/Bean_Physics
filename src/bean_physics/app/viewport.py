@@ -87,6 +87,7 @@ class ViewportWidget(QtWidgets.QWidget):
         self._particle_visuals: list[list[scene.visuals.Mesh]] = []
         self._rigid_mesh_visuals: list[list[scene.visuals.Mesh]] = []
         self._mesh_cache: dict[str, dict[str, object]] = {}
+        self._mesh_keys: dict[int, tuple[object, ...]] = {}
         self._rigid_points = scene.visuals.Markers(parent=self._view.scene)
         self._selected_particles = scene.visuals.Markers(parent=self._view.scene)
         self._selected_particles.set_gl_state("translucent", depth_test=False)
@@ -159,9 +160,10 @@ class ViewportWidget(QtWidgets.QWidget):
                 continue
             spec = visuals[idx]
             assert spec is not None
-            chunks = self._resolve_mesh_chunks(spec, group)
-            if chunks is None:
+            mesh_data = self._resolve_mesh_chunks(spec, group)
+            if mesh_data is None:
                 continue
+            scale = self._resolve_visual_scale(spec, mesh_data)
             rot_local = quat_to_rotmat(
                 np.asarray(spec["rotation_body_quat"], dtype=np.float32)
             )
@@ -170,7 +172,7 @@ class ViewportWidget(QtWidgets.QWidget):
                 np.eye(3, dtype=np.float32),
                 np.asarray(spec["offset_body"], dtype=np.float32),
                 rot_local,
-                np.asarray(spec["scale"], dtype=np.float32),
+                scale,
             )
             for visual in group:
                 visual.visible = True
@@ -227,9 +229,10 @@ class ViewportWidget(QtWidgets.QWidget):
                 continue
             spec = visuals[idx]
             assert spec is not None
-            chunks = self._resolve_mesh_chunks(spec, group)
-            if chunks is None:
+            mesh_data = self._resolve_mesh_chunks(spec, group)
+            if mesh_data is None:
                 continue
+            scale = self._resolve_visual_scale(spec, mesh_data)
             rot_world = quat_to_rotmat(quat[idx])
             rot_local = quat_to_rotmat(
                 np.asarray(spec["rotation_body_quat"], dtype=np.float32)
@@ -239,7 +242,7 @@ class ViewportWidget(QtWidgets.QWidget):
                 rot_world,
                 np.asarray(spec["offset_body"], dtype=np.float32),
                 rot_local,
-                np.asarray(spec["scale"], dtype=np.float32),
+                scale,
             )
             for visual in group:
                 visual.visible = True
@@ -509,7 +512,7 @@ class ViewportWidget(QtWidgets.QWidget):
 
     def _resolve_mesh_chunks(
         self, spec: dict[str, object], group: list[scene.visuals.Mesh]
-    ) -> list[dict[str, object]] | None:
+    ) -> dict[str, object] | None:
         mesh_data = self._get_mesh_data(spec)
         if mesh_data is None:
             fallback = spec.get("fallback")
@@ -525,7 +528,7 @@ class ViewportWidget(QtWidgets.QWidget):
                 group[0].set_gl_state("opaque", depth_test=True, blend=False)
                 group[0].shading = None
                 self._set_group_visible(group, True)
-                return []
+                return {"chunks": []}
             self._set_group_visible(group, False)
             return None
         chunks = mesh_data.get("chunks", [])
@@ -536,18 +539,29 @@ class ViewportWidget(QtWidgets.QWidget):
                 self._warn_if_constant(vertex_colors, spec.get("mesh_path", ""))
             else:
                 self.visual_warning.emit(
-                    "vertex_colors missing — rendering will look grey"
+                    "vertex_colors missing - rendering will look grey"
                 )
-            group[idx].set_data(
-                vertices=chunk["vertices"],
-                faces=chunk["faces"],
-                color=None if vertex_colors is not None else (*spec.get("color_tint", [1.0, 1.0, 1.0]), 1.0),
-                vertex_colors=vertex_colors,
+            mesh_key = (
+                spec.get("mesh_path"),
+                idx,
+                int(chunk["vertices"].shape[0]),
+                int(chunk["faces"].shape[0]),
             )
-            group[idx].set_gl_state("opaque", depth_test=True, blend=False)
-            group[idx].shading = None
+            mesh_id = id(group[idx])
+            if self._mesh_keys.get(mesh_id) != mesh_key:
+                group[idx].set_data(
+                    vertices=chunk["vertices"],
+                    faces=chunk["faces"],
+                    color=None
+                    if vertex_colors is not None
+                    else (*spec.get("color_tint", [1.0, 1.0, 1.0]), 1.0),
+                    vertex_colors=vertex_colors,
+                )
+                group[idx].set_gl_state("opaque", depth_test=True, blend=False)
+                group[idx].shading = None
+                self._mesh_keys[mesh_id] = mesh_key
         self._set_group_visible(group, True)
-        return chunks
+        return mesh_data
 
     def _ensure_mesh_group(
         self, group: list[scene.visuals.Mesh], count: int
@@ -575,7 +589,7 @@ class ViewportWidget(QtWidgets.QWidget):
     def _warn_if_constant(self, colors: np.ndarray, path: object) -> None:
         if _is_constant_color(colors):
             self.visual_warning.emit(
-                f"vertex_colors constant for {path} — rendering may look grey"
+                f"vertex_colors constant for {path} - rendering may look grey"
             )
 
     def _get_mesh_data(self, spec: dict[str, object]) -> dict[str, object] | None:
@@ -595,9 +609,28 @@ class ViewportWidget(QtWidgets.QWidget):
             return None
         mesh_data = {
             "chunks": data.get("chunks", []),
+            "mesh_radius_units": data.get("report", {}).get("mesh_radius_units", 0.0),
         }
         self._mesh_cache[path] = mesh_data
         return mesh_data
+
+    def _resolve_visual_scale(
+        self, spec: dict[str, object], mesh_data: dict[str, object]
+    ) -> np.ndarray:
+        scale = np.asarray(spec.get("scale", [1.0, 1.0, 1.0]), dtype=np.float32)
+        scale_mode = spec.get("scale_mode", "manual")
+        if scale_mode != "manual":
+            radius_m = spec.get("radius_m")
+            mesh_radius = mesh_data.get("mesh_radius_units")
+            if radius_m is None or float(radius_m) <= 0.0:
+                self.visual_warning.emit("No radius_m defined for scale_mode=match_radius")
+                return scale
+            if mesh_radius is None or float(mesh_radius) <= 0.0:
+                self.visual_warning.emit("Mesh radius unavailable for scale_mode=match_radius")
+                return scale
+            factor = float(radius_m) / float(mesh_radius)
+            return np.asarray([factor, factor, factor], dtype=np.float32)
+        return scale
 
 
 def _shape_keys(shapes: list[dict[str, object]]) -> list[tuple[str, tuple[float, ...]]]:

@@ -29,6 +29,8 @@ This schema defines a declarative JSON format for reproducible simulations.
     - `vel` (array[N][3])
     - `mass` (array[N])
     - `ids` (array[N], optional): unique string ids for particles
+    - `physical` (array[N], optional):
+      - `radius_m` (float, optional): authoritative physical radius in meters
     - `visual` (array[N], optional):
       - `null` or visual block (see below)
   - `rigid_bodies` (object, optional):
@@ -38,6 +40,8 @@ This schema defines a declarative JSON format for reproducible simulations.
     - `omega_body` (array[M][3], body frame)
     - `mass` (array[M])
     - `ids` (array[M], optional): unique string ids for rigid bodies
+    - `physical` (array[M], optional):
+      - `radius_m` (float, optional): authoritative physical radius in meters
     - `mass_distribution` (object, required):
       - `points_body` (array[K][3])
       - `point_masses` (array[K])
@@ -60,6 +64,8 @@ Visual blocks are UI-only and do not affect physics.
 - `offset_body` (array[3], optional; default `[0,0,0]`)
 - `rotation_body_quat` (array[4], optional; default `[1,0,0,0]`)
 - `color_tint` (array[3], optional; default `[1,1,1]`, multiplies authored colors)
+- `scale_mode` (string, optional): `"match_radius"` or `"manual"`. When `"match_radius"`, mesh is scaled to `physical.radius_m`.
+- `mesh_radius_units` (float, optional): derived mesh radius in mesh units (for debugging and scaling).
 
 Meshes are recentered to their geometric center for rendering.
 

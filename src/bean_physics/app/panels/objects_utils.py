@@ -56,6 +56,60 @@ def list_rigid_bodies(defn: ScenarioDefinition) -> list[ObjectRef]:
     return [ObjectRef(type="rigid_body", index=i) for i in range(count)]
 
 
+def particle_radius_m(defn: ScenarioDefinition, index: int) -> float | None:
+    particles = defn.get("entities", {}).get("particles")
+    if not particles:
+        return None
+    physical = particles.get("physical")
+    if not isinstance(physical, list) or index >= len(physical):
+        return None
+    entry = physical[index]
+    if not isinstance(entry, dict):
+        return None
+    radius = entry.get("radius_m")
+    return float(radius) if radius is not None else None
+
+
+def rigid_body_radius_m(defn: ScenarioDefinition, index: int) -> float | None:
+    rigid = defn.get("entities", {}).get("rigid_bodies")
+    if not rigid:
+        return None
+    physical = rigid.get("physical")
+    if not isinstance(physical, list) or index >= len(physical):
+        return None
+    entry = physical[index]
+    if not isinstance(entry, dict):
+        return None
+    radius = entry.get("radius_m")
+    return float(radius) if radius is not None else None
+
+
+def set_particle_radius_m(defn: ScenarioDefinition, index: int, radius_m: float | None) -> None:
+    particles = defn.get("entities", {}).get("particles")
+    if not particles:
+        raise ValueError("no particles in scenario")
+    physical = particles.setdefault("physical", [None] * len(particles.get("mass", [])))
+    while len(physical) < len(particles.get("mass", [])):
+        physical.append(None)
+    if radius_m is None or radius_m <= 0.0:
+        physical[index] = None
+        return
+    physical[index] = {"radius_m": float(radius_m)}
+
+
+def set_rigid_body_radius_m(defn: ScenarioDefinition, index: int, radius_m: float | None) -> None:
+    rigid = defn.get("entities", {}).get("rigid_bodies")
+    if not rigid:
+        raise ValueError("no rigid bodies in scenario")
+    physical = rigid.setdefault("physical", [None] * len(rigid.get("mass", [])))
+    while len(physical) < len(rigid.get("mass", [])):
+        physical.append(None)
+    if radius_m is None or radius_m <= 0.0:
+        physical[index] = None
+        return
+    physical[index] = {"radius_m": float(radius_m)}
+
+
 def particle_summary(defn: ScenarioDefinition, index: int) -> dict[str, float]:
     particles = defn.get("entities", {}).get("particles")
     if not particles:
@@ -309,6 +363,9 @@ def add_particle(defn: ScenarioDefinition) -> int:
     if "trail_enabled" in particles:
         trails = particles.setdefault("trail_enabled", [])
         trails.append(False)
+    if "physical" in particles:
+        physical = particles.setdefault("physical", [])
+        physical.append(None)
     return len(particles["mass"]) - 1
 
 
@@ -404,6 +461,9 @@ def add_rigid_body_template(
     if "trail_enabled" in rigid:
         trails = rigid.setdefault("trail_enabled", [])
         trails.append(False)
+    if "physical" in rigid:
+        physical = rigid.setdefault("physical", [])
+        physical.append(None)
 
     sources = rigid.setdefault("source", [])
     if kind == "points":
@@ -448,6 +508,9 @@ def remove_particle(defn: ScenarioDefinition, index: int) -> None:
     trails = particles.get("trail_enabled")
     if isinstance(trails, list) and len(trails) > index:
         del trails[index]
+    physical = particles.get("physical")
+    if isinstance(physical, list) and len(physical) > index:
+        del physical[index]
     if not particles["mass"]:
         entities = defn.get("entities", {})
         entities.pop("particles", None)
@@ -478,6 +541,9 @@ def remove_rigid_body(defn: ScenarioDefinition, index: int) -> None:
     trails = rigid.get("trail_enabled")
     if isinstance(trails, list) and len(trails) > index:
         del trails[index]
+    physical = rigid.get("physical")
+    if isinstance(physical, list) and len(physical) > index:
+        del physical[index]
     inertia_list = _rigid_inertia_list(rigid)
     if inertia_list:
         del inertia_list[index]

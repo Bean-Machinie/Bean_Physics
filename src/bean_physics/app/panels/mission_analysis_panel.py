@@ -21,6 +21,7 @@ from ...analysis.hohmann_planner import (
 )
 from ...core.impulse_events import ImpulseEvent
 from ...io.units import UnitsConfig, config_from_defn, from_si, to_si
+from .objects_utils import particle_radius_m, rigid_body_radius_m
 from ..session import ScenarioSession
 from ..sim_controller import SimulationController
 
@@ -48,6 +49,7 @@ class MissionAnalysisPanel(QtWidgets.QWidget):
         self._spacecraft = QtWidgets.QComboBox(self)
         self._central_mass = QtWidgets.QLabel("-", self)
         self._central_mu = QtWidgets.QLabel("-", self)
+        self._body_radius_source = QtWidgets.QLabel("", self)
 
         self._r1_mode = QtWidgets.QComboBox(self)
         self._r1_mode.addItems(["Altitude above body radius", "Absolute radius"])
@@ -166,6 +168,7 @@ class MissionAnalysisPanel(QtWidgets.QWidget):
         form.addRow("Spacecraft id", self._spacecraft)
         form.addRow("M_central (kg)", self._central_mass)
         form.addRow("mu (m^3/s^2)", self._central_mu)
+        form.addRow("Body radius source", self._body_radius_source)
         return box
 
     def _build_orbit_group(self) -> QtWidgets.QGroupBox:
@@ -339,6 +342,12 @@ class MissionAnalysisPanel(QtWidgets.QWidget):
         self._set_spin_value(self._prop_mass, hohmann.get("prop_mass_kg"))
         self._set_spin_value(self._isp, hohmann.get("isp_s"))
         self._set_spin_value(self._thrust, hohmann.get("thrust_n"))
+        if "body_radius_m" not in hohmann:
+            entry = self._current_entry(self._central_body)
+            if entry is not None:
+                radius = _physical_radius(self._defn, entry)
+                if radius is not None:
+                    self._body_radius.setValue(radius)
 
     def _set_combo_value(self, combo: QtWidgets.QComboBox, value: object) -> None:
         if value is None:
@@ -370,6 +379,7 @@ class MissionAnalysisPanel(QtWidgets.QWidget):
         if entry is None:
             self._central_mass.setText("-")
             self._central_mu.setText("-")
+            self._body_radius_source.setText("")
             self._set_results(None)
             return
         g_val = _find_nbody_g(self._defn, self._units_cfg)
@@ -381,6 +391,15 @@ class MissionAnalysisPanel(QtWidgets.QWidget):
         mu = g_val * entry.mass_si
         self._central_mass.setText(f"{entry.mass_si:.6g}")
         self._central_mu.setText(f"{mu:.6g}")
+        radius_source = _physical_radius(self._defn, entry)
+        if radius_source is not None:
+            if self._body_radius.value() != radius_source:
+                self._body_radius.setValue(radius_source)
+            self._body_radius_source.setText(
+                f"Using {entry.obj_id} radius_m={radius_source:.6g}"
+            )
+        else:
+            self._body_radius_source.setText("Using manual body radius")
 
         r1 = self._compute_radius(self._r1_mode, self._r1_altitude, self._r1_radius)
         r2 = self._compute_radius(self._r2_mode, self._r2_altitude, self._r2_radius)
@@ -713,6 +732,16 @@ def _find_nbody_g(defn: dict[str, Any] | None, units_cfg: UnitsConfig) -> float 
             if g is None:
                 return None
             return float(to_si(g, "G", units_cfg))
+    return None
+
+
+def _physical_radius(defn: dict[str, Any] | None, entry: _EntityEntry) -> float | None:
+    if defn is None:
+        return None
+    if entry.obj_type == "particle":
+        return particle_radius_m(defn, entry.index)
+    if entry.obj_type == "rigid_body":
+        return rigid_body_radius_m(defn, entry.index)
     return None
 
 

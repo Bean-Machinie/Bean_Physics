@@ -126,3 +126,23 @@ def test_build_chunks_multi_geometry() -> None:
     chunks, report = visual_assets._build_chunks([("a", mesh_a), ("b", mesh_b)], "path", "obj", True)
     assert len(chunks) == 2
     assert report["num_geometries"] == 2
+
+
+def test_mesh_radius_units_and_scale_factor() -> None:
+    vertices = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+        ],
+        dtype=np.float32,
+    )
+    radius_units = visual_assets._mesh_radius_units(vertices)
+    assert np.isclose(radius_units, 1.0)
+    scale = visual_assets.scale_factor_for_radius(radius_units, 6_378_137.0)
+    assert np.isclose(scale, 6_378_137.0)
+    rendered_radius = radius_units * scale
+    assert np.isclose(rendered_radius, 6_378_137.0)
