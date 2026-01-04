@@ -5,6 +5,27 @@
     "description": "Start in LEO circular, instantaneous prograde burn raises apoapsis to GEO, coast to apogee, second burn circularizes.",
     "notes": {
       "viewport": "Enable trail on sc (long length), Frame All, optionally Follow Selection."
+    },
+    "mission_analysis": {
+      "kind": "hohmann",
+      "hohmann": {
+        "central_body_id": "earth",
+        "spacecraft_id": "sc",
+        "r1_mode": "Altitude above body radius",
+        "r2_mode": "Absolute radius",
+        "body_radius_m": 6378137.0,
+        "r1_altitude_m": 300000.0,
+        "r1_radius_m": 6678137.0,
+        "r2_altitude_m": 35786000.0,
+        "r2_radius_m": 42164000.0,
+        "coast_time_s": 0.0,
+        "burn2_mode": "Auto at apoapsis",
+        "burn2_time_s": 0.0,
+        "dry_mass_kg": 1000.0,
+        "prop_mass_kg": 0.0,
+        "isp_s": 300.0,
+        "thrust_n": 0.0
+      }
     }
   },
   "units": {

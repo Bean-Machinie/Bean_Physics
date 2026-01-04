@@ -69,6 +69,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._objects_panel.add_object_requested.connect(self._on_add_object)
         self._objects_panel.remove_requested.connect(self._on_remove_selected)
 
+        self._mission_panel = None
+        self._mission_dock = None
+
         self._inspector = ObjectInspector(self)
         self._inspector.applied.connect(self._on_inspector_applied)
 
@@ -699,6 +702,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._viewport.set_selected_rigid_body(None)
             self._viewport.set_trail_targets([])
             self._viewport.set_trails_enabled(False)
+            self._sync_mission_panel()
             if self._inspector.isVisible():
                 self._inspector.set_target(
                     self._session.scenario_def, None, self._session.scenario_path
@@ -710,6 +714,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._objects_panel.set_items(
             self._session.scenario_def, particles, rigid_bodies, forces
         )
+        self._sync_mission_panel()
         if particles:
             self._objects_panel.select_object(particles[0])
             self._on_object_selected(particles[0])
@@ -882,6 +887,46 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_action_state()
         self._update_status()
         self._update_window_title()
+
+    def _on_mission_apply(self) -> None:
+        if self._session.scenario_def is None:
+            return
+        self._session.mark_dirty()
+        self._controller.load_definition(self._session.scenario_def)
+        self._controller.scenario_path = self._session.scenario_path
+        self._running = False
+        self._apply_state_to_viewport()
+        self._refresh_objects_panel()
+        self._update_action_state()
+        self._update_status()
+        self._update_window_title()
+
+    def _sync_mission_panel(self) -> None:
+        defn = self._session.scenario_def
+        supports = _scenario_supports_mission_panel(defn)
+        if not supports:
+            if self._mission_panel is not None:
+                self._mission_panel.unbind()
+            if self._mission_dock is not None:
+                self._mission_dock.hide()
+            return
+        if self._mission_panel is None:
+            from .panels.mission_analysis_panel import MissionAnalysisPanel
+
+            self._mission_panel = MissionAnalysisPanel(self)
+            self._mission_panel.apply_requested.connect(self._on_mission_apply)
+        if self._mission_dock is None:
+            self._mission_dock = QtWidgets.QDockWidget("Mission Analysis", self)
+            self._mission_dock.setWidget(self._mission_panel)
+            self._mission_dock.setAllowedAreas(
+                QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
+                | QtCore.Qt.DockWidgetArea.RightDockWidgetArea
+            )
+            self.addDockWidget(
+                QtCore.Qt.DockWidgetArea.RightDockWidgetArea, self._mission_dock
+            )
+        self._mission_dock.show()
+        self._mission_panel.bind_session(self._session, self._controller)
 
     def _update_rigid_body_points(self) -> None:
         obj = self._objects_panel.selected_object()
@@ -1064,6 +1109,22 @@ class MainWindow(QtWidgets.QMainWindow):
 
 def compute_sim_rate(dt: float, steps_per_frame: int, fps: float = 60.0) -> float:
     return dt * steps_per_frame * fps
+
+
+def _scenario_supports_mission_panel(defn: dict[str, object] | None) -> bool:
+    if defn is None:
+        return False
+    meta = defn.get("metadata", {})
+    if isinstance(meta, dict):
+        mission = meta.get("mission_analysis", {})
+        if isinstance(mission, dict) and mission.get("kind") == "hohmann":
+            return True
+        ui = meta.get("ui", {})
+        if isinstance(ui, dict):
+            panels = ui.get("panels", [])
+            if isinstance(panels, list) and "mission_analysis_hohmann" in panels:
+                return True
+    return False
 
 
 def _recording_worker(queue: Queue[object | None], video_path: Path) -> None:

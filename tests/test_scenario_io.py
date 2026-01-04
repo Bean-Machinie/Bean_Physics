@@ -183,6 +183,48 @@ def test_impulse_events_round_trip(tmp_path: Path) -> None:
     assert _scenario_equal(defn, loaded)
 
 
+def test_mission_analysis_metadata_round_trip(tmp_path: Path) -> None:
+    defn = {
+        "schema_version": 1,
+        "metadata": {
+            "mission_analysis": {
+                "hohmann": {
+                    "central_body_id": "earth",
+                    "spacecraft_id": "sc",
+                    "r1_mode": "Altitude above body radius",
+                    "r2_mode": "Absolute radius",
+                    "body_radius_m": 6378137.0,
+                    "r1_altitude_m": 300000.0,
+                    "r1_radius_m": 6678137.0,
+                    "r2_altitude_m": 35786000.0,
+                    "r2_radius_m": 42164000.0,
+                    "coast_time_s": 0.0,
+                    "burn2_mode": "Auto at apoapsis",
+                    "burn2_time_s": 0.0,
+                    "dry_mass_kg": 1000.0,
+                    "prop_mass_kg": 500.0,
+                    "isp_s": 300.0,
+                    "thrust_n": 0.0,
+                }
+            }
+        },
+        "simulation": {"dt": 0.1, "steps": 10, "integrator": "symplectic_euler"},
+        "entities": {
+            "particles": {
+                "pos": [[0.0, 0.0, 0.0]],
+                "vel": [[0.0, 0.0, 0.0]],
+                "mass": [1.0],
+                "ids": ["earth"],
+            }
+        },
+        "models": [],
+    }
+    out = tmp_path / "mission_analysis.json"
+    save_scenario(out, defn)
+    loaded = load_scenario(out)
+    assert _scenario_equal(defn, loaded)
+
+
 def test_determinism_two_body() -> None:
     defn = load_scenario("examples/scenarios/two_body_orbit_v1.json")
     state1, model1, integrator1, dt1, steps1, _ = scenario_to_runtime(defn)

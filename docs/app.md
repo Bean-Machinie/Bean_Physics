@@ -36,3 +36,8 @@ Recording:
 - Use `Record` in the toolbar to capture an MP4 video (requires `ffmpeg` on PATH).
 - `Output Folder` chooses the base directory (defaults to `./recordings`).
 - `Capture Every` controls the stride; metadata is saved in `meta.json`.
+
+Mission Analysis:
+
+- The `Mission Analysis` dock provides a Hohmann planner for circular orbits.
+- Set central body, orbits, timing, and spacecraft parameters, then click `Apply to Scenario` to generate impulse events.

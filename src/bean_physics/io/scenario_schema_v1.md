@@ -11,6 +11,7 @@ This schema defines a declarative JSON format for reproducible simulations.
 - `metadata` (object, optional):
   - `name` (string, optional)
   - `description` (string, optional)
+  - `mission_analysis` (object, optional): UI metadata such as Hohmann planner inputs
 - `simulation` (object, required):
   - `dt` (float, required, > 0)
   - `steps` (int, required, >= 0)
