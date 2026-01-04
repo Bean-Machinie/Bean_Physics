@@ -75,6 +75,22 @@ def test_color_priority_vertex_over_texture() -> None:
     assert np.allclose(chunk["vertex_colors"], expected)
 
 
+def test_texture_chunk_pass_through() -> None:
+    uv = np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32)
+    image = np.zeros((2, 2, 3), dtype=np.uint8)
+    visual = _DummyVisual(kind="texture", uv=uv, image=image)
+    mesh = _DummyMesh(
+        visual,
+        vertices=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32),
+        faces=np.array([[0, 1, 1]], dtype=np.int32),
+    )
+    chunk, entry = visual_assets._build_chunk(mesh, "dummy")
+    assert entry["chosen_path"] == "using texture image"
+    assert chunk["texcoords"] is not None
+    assert chunk["texture_image"] is not None
+    assert chunk["texture_image"].shape[-1] == 4
+
+
 def test_sample_texture_bilinear() -> None:
     image = np.array(
         [

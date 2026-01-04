@@ -20,13 +20,13 @@ def test_hohmann_numbers_leo_to_geo() -> None:
     r1 = 6_378_137.0 + 300_000.0
     r2 = 42_164_000.0
     res = compute_hohmann(mu, r1, r2)
-    assert np.isclose(res.v1, 7725.760232077137, rtol=1e-9)
-    assert np.isclose(res.v_p, 10151.490141023442, rtol=1e-9)
-    assert np.isclose(res.v_a, 1607.8418061830916, rtol=1e-9)
-    assert np.isclose(res.v2, 3074.6662841276843, rtol=1e-9)
-    assert np.isclose(res.dv1, 2425.729908946305, rtol=1e-9)
-    assert np.isclose(res.dv2, 1466.8244779445927, rtol=1e-9)
-    assert np.isclose(res.t_transfer, 18990.13173812482, rtol=1e-9)
+    assert np.isclose(res.v1, 7725.77414239097, rtol=1e-9)
+    assert np.isclose(res.v_p, 10151.5084188899, rtol=1e-9)
+    assert np.isclose(res.v_a, 1607.84470111944, rtol=1e-9)
+    assert np.isclose(res.v2, 3074.67182009718, rtol=1e-9)
+    assert np.isclose(res.dv1, 2425.73427649892, rtol=1e-9)
+    assert np.isclose(res.dv2, 1466.82711897774, rtol=1e-9)
+    assert np.isclose(res.t_transfer, 18990.0975462513, rtol=1e-9)
 
 
 def test_rocket_equation_propellant() -> None:

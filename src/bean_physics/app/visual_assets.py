@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import os
 
 import numpy as np
 
@@ -81,14 +82,33 @@ def _build_chunk(mesh: Any, name: str) -> tuple[dict[str, Any], dict[str, Any]]:
     warnings: list[str] = []
     chosen = "fallback neutral (no colors/UV/texture)"
     colors = None
+    texcoords = None
+    texture_image = None
+    texture_has_alpha = False
     to_color_used = False
     to_color_error: str | None = None
 
+    _validate_mesh_data(vertices, faces)
+
+    texture_ready = False
     if vertex_colors_raw is not None:
         colors = _vertex_colors(vertex_colors_raw)
         vertices, faces, colors = _align_vertex_colors(vertices, faces, colors)
         chosen = "using vertex colors"
-    elif visual is not None and hasattr(visual, "to_color"):
+    if colors is None and uv is not None and image is not None:
+        prepared = _prepare_uv(vertices, faces, uv)
+        if prepared is None:
+            warnings.append("UV count mismatch; cannot use texture.")
+        else:
+            vertices, faces, texcoords = prepared
+            texture_image = _image_to_rgba(image)
+            if texture_image is None:
+                warnings.append("Texture image invalid; cannot use texture.")
+            else:
+                texture_has_alpha = _image_has_alpha(texture_image)
+                chosen = "using texture image"
+                texture_ready = True
+    if colors is None and not texture_ready and visual is not None and hasattr(visual, "to_color"):
         try:
             converted = visual.to_color()
             converted_colors = getattr(converted, "vertex_colors", None)
@@ -99,25 +119,14 @@ def _build_chunk(mesh: Any, name: str) -> tuple[dict[str, Any], dict[str, Any]]:
                 to_color_used = True
         except Exception as exc:  # pragma: no cover - diagnostic path
             to_color_error = str(exc)
-    elif uv is not None and image is not None:
-        prepared = _prepare_uv(vertices, faces, uv)
-        if prepared is None:
-            warnings.append("UV count mismatch; cannot bake texture.")
-        else:
-            vertices, faces, uv = prepared
-            colors = _bake_texture_colors(uv, image)
-            if colors is None:
-                warnings.append("Texture bake failed; missing image or UVs.")
-            else:
-                chosen = "baking texture via UVs"
-    elif has_base_color:
+    if colors is None and not texture_ready and has_base_color:
         colors = _solid_color(vertices.shape[0], base_color)
         chosen = "using material base color"
 
     vertices, _ = _center_vertices(vertices)
     mesh_radius_units = _mesh_radius_units(vertices)
     stats = _color_stats(colors) if colors is not None else None
-    if colors is None:
+    if colors is None and texcoords is None:
         warnings.append("No vertex colors or texture/UVs found; rendering untextured.")
         if uv is not None and image is None:
             warnings.append(
@@ -129,6 +138,9 @@ def _build_chunk(mesh: Any, name: str) -> tuple[dict[str, Any], dict[str, Any]]:
         "vertices": vertices,
         "faces": faces,
         "vertex_colors": colors,
+        "texcoords": texcoords,
+        "texture_image": texture_image,
+        "texture_has_alpha": texture_has_alpha,
         "chosen_path": chosen,
         "mesh_radius_units": mesh_radius_units,
     }
@@ -143,6 +155,7 @@ def _build_chunk(mesh: Any, name: str) -> tuple[dict[str, Any], dict[str, Any]]:
         "has_material_image": image is not None,
         "image_source": image_source,
         "image_shape": getattr(image, "shape", None),
+        "has_texture": texture_image is not None,
         "has_base_color": has_base_color,
         "base_color": base_color,
         "chosen_path": chosen,
@@ -206,6 +219,35 @@ def _sample_texture(image: np.ndarray, uv: np.ndarray, v_flip: bool = True) -> n
     return c0 * (1 - wy) + c1 * wy
 
 
+def _flip_uv_v(uv: np.ndarray) -> np.ndarray:
+    if uv.size == 0:
+        return uv
+    uv = np.asarray(uv, dtype=np.float32)
+    uv[:, 1] = 1.0 - uv[:, 1]
+    return uv
+
+
+def _image_to_rgba(image: Any) -> np.ndarray | None:
+    try:
+        img = np.asarray(image)
+    except Exception:
+        return None
+    if img.ndim == 2:
+        img = np.stack([img, img, img], axis=-1)
+    if img.ndim != 3 or img.shape[2] not in (3, 4):
+        return None
+    if img.shape[2] == 3:
+        alpha = np.full((img.shape[0], img.shape[1], 1), 255, dtype=img.dtype)
+        img = np.concatenate([img, alpha], axis=2)
+    return img.astype(np.uint8, copy=False)
+
+
+def _image_has_alpha(image: np.ndarray) -> bool:
+    if image.ndim != 3 or image.shape[2] < 4:
+        return False
+    return bool(np.any(image[:, :, 3] < 255))
+
+
 def _prepare_uv(
     vertices: np.ndarray, faces: np.ndarray, uv: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
@@ -213,15 +255,15 @@ def _prepare_uv(
     if uv.ndim == 3 and uv.shape[0] == faces.shape[0] and uv.shape[1:] == (3, 2):
         vertices, faces = _unroll_vertices(vertices, faces)
         uv = uv.reshape(-1, 2)
-        return vertices, faces, uv
+        return vertices, faces, _flip_uv_v(uv)
     if uv.ndim != 2 or uv.shape[1] != 2:
         return None
     if uv.shape[0] == vertices.shape[0]:
-        return vertices, faces, uv
+        return vertices, faces, _flip_uv_v(uv)
     if uv.shape[0] == faces.shape[0] * 3:
         vertices, faces = _unroll_vertices(vertices, faces)
         uv = uv.reshape(-1, 2)
-        return vertices, faces, uv
+        return vertices, faces, _flip_uv_v(uv)
     return None
 
 
@@ -252,6 +294,23 @@ def _mesh_radius_units(vertices: np.ndarray) -> float:
     return float(np.max(np.linalg.norm(vertices, axis=1)))
 
 
+def _validate_mesh_data(vertices: np.ndarray, faces: np.ndarray) -> None:
+    if vertices.ndim != 2 or vertices.shape[1] != 3:
+        raise ValueError("mesh vertices must have shape (N, 3)")
+    if faces.ndim != 2 or faces.shape[1] != 3:
+        raise ValueError("mesh faces must have shape (M, 3)")
+    if vertices.size == 0 or faces.size == 0:
+        return
+    if not np.isfinite(vertices).all():
+        raise ValueError("mesh vertices contain NaNs or infs")
+    if not np.isfinite(faces).all():
+        raise ValueError("mesh faces contain NaNs or infs")
+    min_index = int(np.min(faces))
+    max_index = int(np.max(faces))
+    if min_index < 0 or max_index >= vertices.shape[0]:
+        raise ValueError("mesh faces reference invalid vertex indices")
+
+
 def scale_factor_for_radius(mesh_radius_units: float, radius_m: float) -> float:
     if mesh_radius_units <= 0.0:
         raise ValueError("mesh_radius_units must be > 0")
@@ -279,7 +338,19 @@ def _extract_material_image(material: Any) -> tuple[Any | None, str | None]:
         tex_image = getattr(texture, "image", None)
         if tex_image is not None:
             return tex_image, "material.baseColorTexture.image"
+        if _looks_like_image(texture):
+            return texture, "material.baseColorTexture"
     return None, None
+
+
+def _looks_like_image(obj: Any) -> bool:
+    if obj is None:
+        return False
+    if hasattr(obj, "__array__"):
+        return True
+    if hasattr(obj, "size") and hasattr(obj, "mode"):
+        return True
+    return False
 
 
 def _extract_base_color(material: Any) -> list[float] | None:
@@ -316,18 +387,35 @@ def _color_stats(colors: np.ndarray) -> dict[str, list[float]]:
 
 
 def _print_report(report: dict[str, Any]) -> None:
-    lines = [
+    debug = _debug_enabled()
+    summary = [
         "Visual asset report:",
         f"  path: {report.get('path')}",
         f"  format: {report.get('format')}",
         f"  scene: {report.get('is_scene')} (geometries={report.get('num_geometries')})",
     ]
     for entry in report.get("geometries", []):
-        lines.append(f"  geometry: {entry.get('name')}")
-        lines.append(
+        summary.append(f"  geometry: {entry.get('name')}")
+        summary.append(
             "    verts/faces: "
             f"{entry.get('n_vertices')}/{entry.get('n_faces')}"
         )
+        summary.append(
+            "    has_uv/texture/vertex_colors: "
+            f"{entry.get('has_uv')}/"
+            f"{entry.get('has_texture')}/"
+            f"{entry.get('has_vertex_colors')}"
+        )
+        if entry.get("image_shape") is not None:
+            summary.append(f"    texture_shape: {entry.get('image_shape')}")
+        summary.append(f"    chosen: {entry.get('chosen_path')}")
+    print("\n".join(summary))
+
+    if not debug:
+        return
+    lines = []
+    for entry in report.get("geometries", []):
+        lines.append(f"  geometry: {entry.get('name')}")
         lines.append(f"    visual: {entry.get('visual_type')} ({entry.get('material_type')})")
         lines.append(
             "    has_vertex_colors/uv/image: "
@@ -345,11 +433,16 @@ def _print_report(report: dict[str, Any]) -> None:
             lines.append(f"    base_color: {entry.get('base_color')}")
         if entry.get("image_shape") is not None:
             lines.append(f"    image_shape: {entry.get('image_shape')}")
-        lines.append(f"    chosen: {entry.get('chosen_path')}")
         stats = entry.get("baked_colors_stats")
         if stats is not None:
             lines.append(f"    colors min/max: {stats['min']} / {stats['max']}")
         warnings = entry.get("warnings", [])
         for warning in warnings:
             lines.append(f"    warning: {warning}")
-    print("\n".join(lines))
+    if lines:
+        print("\n".join(lines))
+
+
+def _debug_enabled() -> bool:
+    val = os.getenv("BEAN_VIS_DEBUG", "")
+    return val not in ("", "0", "false", "False")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import numpy as np
 from PySide6 import QtCore, QtWidgets
 from vispy import app, scene
@@ -9,6 +10,7 @@ from vispy.util import keys
 
 from ..core.math.quat import quat_to_rotmat
 from .visual_assets import load_mesh_data
+from .textured_mesh_visual import TexturedMesh
 from .viz_utils import (
     compose_visual_transform,
     compute_bounds,
@@ -84,8 +86,8 @@ class ViewportWidget(QtWidgets.QWidget):
         self._particles = scene.visuals.Markers(parent=self._view.scene)
         self._rigid_visuals: list[scene.visuals.Mesh] = []
         self._rigid_shapes: list[dict[str, object]] = []
-        self._particle_visuals: list[list[scene.visuals.Mesh]] = []
-        self._rigid_mesh_visuals: list[list[scene.visuals.Mesh]] = []
+        self._particle_visuals: list[list[scene.visuals.VisualNode]] = []
+        self._rigid_mesh_visuals: list[list[scene.visuals.VisualNode]] = []
         self._mesh_cache: dict[str, dict[str, object]] = {}
         self._mesh_keys: dict[int, tuple[object, ...]] = {}
         self._rigid_points = scene.visuals.Markers(parent=self._view.scene)
@@ -511,7 +513,7 @@ class ViewportWidget(QtWidgets.QWidget):
                 visual.parent = None
 
     def _resolve_mesh_chunks(
-        self, spec: dict[str, object], group: list[scene.visuals.Mesh]
+        self, spec: dict[str, object], group: list[scene.visuals.VisualNode]
     ) -> dict[str, object] | None:
         mesh_data = self._get_mesh_data(spec)
         if mesh_data is None:
@@ -535,54 +537,92 @@ class ViewportWidget(QtWidgets.QWidget):
         self._ensure_mesh_group(group, len(chunks))
         for idx, chunk in enumerate(chunks):
             vertex_colors = chunk.get("vertex_colors")
-            if vertex_colors is not None:
-                self._warn_if_constant(vertex_colors, spec.get("mesh_path", ""))
-            else:
-                self.visual_warning.emit(
-                    "vertex_colors missing - rendering will look grey"
-                )
+            texcoords = chunk.get("texcoords")
+            texture_image = chunk.get("texture_image")
+            has_texture = texcoords is not None and texture_image is not None
+            visual = group[idx]
+            if has_texture and not isinstance(visual, TexturedMesh):
+                visual.parent = None
+                group[idx] = self._create_textured_visual()
+                visual = group[idx]
+            if not has_texture and isinstance(visual, TexturedMesh):
+                visual.parent = None
+                group[idx] = self._create_mesh_visual()
+                visual = group[idx]
+            if not has_texture:
+                if vertex_colors is not None:
+                    self._warn_if_constant(vertex_colors, spec.get("mesh_path", ""))
+                else:
+                    self.visual_warning.emit(
+                        "vertex_colors missing - rendering will look grey"
+                    )
             mesh_key = (
                 spec.get("mesh_path"),
+                mesh_data.get("mtime"),
                 idx,
                 int(chunk["vertices"].shape[0]),
                 int(chunk["faces"].shape[0]),
+                bool(has_texture),
             )
-            mesh_id = id(group[idx])
+            mesh_id = id(visual)
             if self._mesh_keys.get(mesh_id) != mesh_key:
-                group[idx].set_data(
-                    vertices=chunk["vertices"],
-                    faces=chunk["faces"],
-                    color=None
-                    if vertex_colors is not None
-                    else (*spec.get("color_tint", [1.0, 1.0, 1.0]), 1.0),
-                    vertex_colors=vertex_colors,
-                )
-                group[idx].set_gl_state("opaque", depth_test=True, blend=False)
-                group[idx].shading = None
+                if has_texture:
+                    tint = (*spec.get("color_tint", [1.0, 1.0, 1.0]), 1.0)
+                    assert isinstance(visual, TexturedMesh)
+                    visual.set_data(
+                        vertices=chunk["vertices"],
+                        faces=chunk["faces"],
+                        texcoords=texcoords,
+                        texture=texture_image,
+                        tint=tint,
+                        has_alpha=bool(chunk.get("texture_has_alpha")),
+                    )
+                else:
+                    assert isinstance(visual, scene.visuals.Mesh)
+                    visual.set_data(
+                        vertices=chunk["vertices"],
+                        faces=chunk["faces"],
+                        color=None
+                        if vertex_colors is not None
+                        else (*spec.get("color_tint", [1.0, 1.0, 1.0]), 1.0),
+                        vertex_colors=vertex_colors,
+                    )
+                    visual.set_gl_state("opaque", depth_test=True, blend=False)
+                    visual.shading = None
                 self._mesh_keys[mesh_id] = mesh_key
         self._set_group_visible(group, True)
         return mesh_data
 
     def _ensure_mesh_group(
-        self, group: list[scene.visuals.Mesh], count: int
+        self, group: list[scene.visuals.VisualNode], count: int
     ) -> None:
         while len(group) < count:
-            vertices, faces = _sphere_mesh(0.01, 4, 8)
-            visual = scene.visuals.Mesh(
-                vertices=vertices,
-                faces=faces,
-                color=(0.7, 0.7, 0.7, 1.0),
-                shading=None,
-                parent=self._view.scene,
-            )
-            visual.set_gl_state("opaque", depth_test=True, blend=False)
-            visual.transform = scene.transforms.MatrixTransform()
-            group.append(visual)
+            group.append(self._create_mesh_visual())
         while len(group) > count:
             visual = group.pop()
             visual.parent = None
 
-    def _set_group_visible(self, group: list[scene.visuals.Mesh], visible: bool) -> None:
+    def _create_mesh_visual(self) -> scene.visuals.Mesh:
+        vertices, faces = _sphere_mesh(0.01, 4, 8)
+        visual = scene.visuals.Mesh(
+            vertices=vertices,
+            faces=faces,
+            color=(0.7, 0.7, 0.7, 1.0),
+            shading=None,
+            parent=self._view.scene,
+        )
+        visual.set_gl_state("opaque", depth_test=True, blend=False)
+        visual.transform = scene.transforms.MatrixTransform()
+        return visual
+
+    def _create_textured_visual(self) -> TexturedMesh:
+        visual = TexturedMesh(parent=self._view.scene)
+        visual.transform = scene.transforms.MatrixTransform()
+        return visual
+
+    def _set_group_visible(
+        self, group: list[scene.visuals.VisualNode], visible: bool
+    ) -> None:
         for visual in group:
             visual.visible = visible
 
@@ -596,11 +636,20 @@ class ViewportWidget(QtWidgets.QWidget):
         path = spec.get("mesh_path")
         if not path:
             return None
+        try:
+            mtime = Path(path).stat().st_mtime
+        except Exception:
+            mtime = None
         if path in self._mesh_cache:
             cached = self._mesh_cache[path]
-            if cached.get("missing"):
+            cached_mtime = cached.get("mtime")
+            if cached_mtime is not None and mtime is not None and cached_mtime != mtime:
+                del self._mesh_cache[path]
+                cached = None
+            if cached and cached.get("missing"):
                 return None
-            return cached
+            if cached:
+                return cached
         try:
             data = load_mesh_data(path)
         except Exception as exc:
@@ -610,6 +659,7 @@ class ViewportWidget(QtWidgets.QWidget):
         mesh_data = {
             "chunks": data.get("chunks", []),
             "mesh_radius_units": data.get("report", {}).get("mesh_radius_units", 0.0),
+            "mtime": mtime,
         }
         self._mesh_cache[path] = mesh_data
         return mesh_data
