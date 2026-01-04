@@ -254,6 +254,18 @@ def convert_definition_units(
                         force["force_world"], "force", from_cfg, to_cfg
                     ).tolist()
 
+    events = defn.get("impulse_events")
+    if isinstance(events, list):
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            if "t" in event:
+                event["t"] = float(convert_value(event["t"], "time", from_cfg, to_cfg))
+            if "delta_v_world" in event:
+                event["delta_v_world"] = convert_value(
+                    event["delta_v_world"], "velocity", from_cfg, to_cfg
+                ).tolist()
+
     defn["units"] = {"preset": to_cfg.preset, "enabled": to_cfg.enabled}
 
 

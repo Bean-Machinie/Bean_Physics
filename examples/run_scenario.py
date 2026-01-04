@@ -27,7 +27,16 @@ def main() -> int:
     state, model, integrator, dt, steps, aux = scenario_to_runtime(defn)
     sample_every = defn.get("sampling", {}).get("every")
 
-    result = run(state, model, integrator, dt, steps, sample_every=sample_every)
+    impulse_events = aux.get("impulse_events", [])
+    result = run(
+        state,
+        model,
+        integrator,
+        dt,
+        steps,
+        sample_every=sample_every,
+        impulse_events=impulse_events,
+    )
     final = result.final_state
 
     print("steps:", steps)

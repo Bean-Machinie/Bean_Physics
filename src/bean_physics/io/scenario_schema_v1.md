@@ -17,11 +17,17 @@ This schema defines a declarative JSON format for reproducible simulations.
   - `integrator` (string, required): `"symplectic_euler"` or `"velocity_verlet"`
 - `sampling` (object, optional):
   - `every` (int, optional, > 0) number of steps between samples
+- `impulse_events` (array, optional):
+  - `t` (float, required, >= 0): simulation time for the impulse
+  - `target` (string, required): id in `entities.particles.ids` or `entities.rigid_bodies.ids`
+  - `delta_v_world` (array[3], required): instantaneous velocity change in world frame
+  - `label` (string, optional)
 - `entities` (object, optional):
   - `particles` (object, optional):
     - `pos` (array[N][3])
     - `vel` (array[N][3])
     - `mass` (array[N])
+    - `ids` (array[N], optional): unique string ids for particles
     - `visual` (array[N], optional):
       - `null` or visual block (see below)
   - `rigid_bodies` (object, optional):
@@ -30,6 +36,7 @@ This schema defines a declarative JSON format for reproducible simulations.
     - `quat` (array[M][4], body->world, `[w,x,y,z]`)
     - `omega_body` (array[M][3], body frame)
     - `mass` (array[M])
+    - `ids` (array[M], optional): unique string ids for rigid bodies
     - `mass_distribution` (object, required):
       - `points_body` (array[K][3])
       - `point_masses` (array[K])

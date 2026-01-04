@@ -674,6 +674,10 @@ class MainWindow(QtWidgets.QMainWindow):
         energy = info.get("energy")
         if energy is not None:
             msg += f"  E={energy:.6f}"
+        impulses = self._controller.consume_impulse_events()
+        if impulses:
+            labels = [evt.label or evt.target_id for evt in impulses]
+            msg += f"  impulse={', '.join(labels)}"
         if self._recording_enabled and self._recording_paths is not None:
             msg += (
                 f"  REC {self._recording_frame}  "

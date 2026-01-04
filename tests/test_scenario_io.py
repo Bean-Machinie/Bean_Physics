@@ -155,6 +155,34 @@ def test_visual_round_trip(tmp_path: Path) -> None:
     assert _scenario_equal(defn, loaded)
 
 
+def test_impulse_events_round_trip(tmp_path: Path) -> None:
+    defn = {
+        "schema_version": 1,
+        "simulation": {"dt": 0.1, "steps": 10, "integrator": "symplectic_euler"},
+        "entities": {
+            "particles": {
+                "pos": [[0.0, 0.0, 0.0]],
+                "vel": [[0.0, 0.0, 0.0]],
+                "mass": [1.0],
+                "ids": ["p0"],
+            }
+        },
+        "impulse_events": [
+            {
+                "t": 1.0,
+                "target": "p0",
+                "delta_v_world": [1.0, 0.0, 0.0],
+                "label": "kick",
+            }
+        ],
+        "models": [],
+    }
+    out = tmp_path / "impulse_roundtrip.json"
+    save_scenario(out, defn)
+    loaded = load_scenario(out)
+    assert _scenario_equal(defn, loaded)
+
+
 def test_determinism_two_body() -> None:
     defn = load_scenario("examples/scenarios/two_body_orbit_v1.json")
     state1, model1, integrator1, dt1, steps1, _ = scenario_to_runtime(defn)

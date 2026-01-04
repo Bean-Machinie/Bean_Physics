@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "name": "Hohmann transfer LEO to GEO (v1)",
+    "description": "Start in LEO circular, instantaneous prograde burn raises apoapsis to GEO, coast to apogee, second burn circularizes.",
+    "notes": {
+      "viewport": "Enable trail on sc (long length), Frame All, optionally Follow Selection."
+    }
+  },
+  "units": {
+    "preset": "SI",
+    "enabled": true
+  },
+  "simulation": {
+    "dt": 2.0,
+    "steps": 30000,
+    "integrator": "velocity_verlet"
+  },
+  "entities": {
+    "particles": {
+      "pos": [
+        [0.0, 0.0, 0.0],
+        [6678137.0, 0.0, 0.0]
+      ],
+      "vel": [
+        [0.0, 0.0, 0.0],
+        [0.0, 7725.760232077137, 0.0]
+      ],
+      "mass": [5.97219e24, 1000.0],
+      "ids": ["earth", "sc"],
+      "trail_enabled": [false, true]
+    }
+  },
+  "models": [
+    {
+      "nbody_gravity": {
+        "G": 6.67430e-11,
+        "softening": 0.0,
+        "chunk_size": null
+      }
+    }
+  ],
+  "impulse_events": [
+    {
+      "t": 0.0,
+      "target": "sc",
+      "delta_v_world": [0.0, 2425.729908946305, 0.0],
+      "label": "Burn 1: raise apoapsis to GEO"
+    },
+    {
+      "t": 18990.13173812482,
+      "target": "sc",
+      "delta_v_world": [0.0, -1466.8244779445927, 0.0],
+      "label": "Burn 2: circularize at GEO"
+    }
+  ]
+}

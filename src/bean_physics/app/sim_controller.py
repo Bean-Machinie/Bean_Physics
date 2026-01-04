@@ -10,6 +10,7 @@ import numpy as np
 
 from ..core.diagnostics.particles import total_energy_gravity
 from ..core.forces.nbody_gravity import NBodyGravity
+from ..core.impulse_events import ImpulseEvent, ImpulseSchedule
 from ..core.state.system import SystemState
 from ..io.scenario import load_scenario, scenario_to_runtime
 
@@ -31,6 +32,8 @@ class SimulationController:
         self.initial_state: SystemState | None = None
         self.runtime: SimulationRuntime | None = None
         self.current_step = 0
+        self._impulse_schedule: ImpulseSchedule | None = None
+        self._fired_impulses: list[ImpulseEvent] = []
 
     def load_scenario(self, path: str | Path) -> None:
         scenario_path = Path(path)
@@ -49,6 +52,11 @@ class SimulationController:
             steps=steps,
             aux=aux,
         )
+        events = aux.get("impulse_events", [])
+        self._impulse_schedule = (
+            ImpulseSchedule(events=events) if events else None
+        )
+        self._fired_impulses = []
         self.initial_state = state.clone()
         self.current_step = 0
 
@@ -57,6 +65,9 @@ class SimulationController:
             return False
         self.runtime.state = self.initial_state.clone()
         self.current_step = 0
+        if self._impulse_schedule is not None:
+            self._impulse_schedule.reset()
+        self._fired_impulses = []
         return True
 
     def can_step(self) -> bool:
@@ -69,6 +80,23 @@ class SimulationController:
             return False
         runtime = self.runtime
         assert runtime is not None
+        if self._impulse_schedule is not None:
+            prev_t = self.current_step * runtime.dt
+            new_t = (self.current_step + 1) * runtime.dt
+            fired = self._impulse_schedule.fire_for_window(
+                runtime.state,
+                prev_t=prev_t,
+                new_t=new_t,
+                include_start=(self.current_step == 0),
+            )
+            if fired:
+                self._fired_impulses.extend(fired)
+                for event in fired:
+                    label = f" label={event.label}" if event.label else ""
+                    print(
+                        f"Impulse event fired at t={event.t:.6f}s "
+                        f"target={event.target_id}{label}"
+                    )
         runtime.integrator.step(runtime.state, runtime.model, runtime.dt)
         self.current_step += 1
         return True
@@ -87,6 +115,11 @@ class SimulationController:
                 runtime.state, nbody.G, nbody.softening
             )
         return info
+
+    def consume_impulse_events(self) -> list[ImpulseEvent]:
+        events = self._fired_impulses
+        self._fired_impulses = []
+        return events
 
     def particle_positions(self) -> np.ndarray:
         if self.runtime is None or self.runtime.state.particles is None:

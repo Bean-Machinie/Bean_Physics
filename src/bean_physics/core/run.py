@@ -9,6 +9,7 @@ import numpy as np
 
 from .forces.base import Model
 from .integrators import Integrator
+from .impulse_events import ImpulseEvent, ImpulseSchedule
 from .state.system import SystemState
 
 
@@ -31,6 +32,7 @@ def run(
     steps: int,
     sample_every: int | None = None,
     callback: Callable[[int, SystemState], None] | None = None,
+    impulse_events: list[ImpulseEvent] | None = None,
 ) -> RunResult:
     if sample_every is not None and sample_every <= 0:
         raise ValueError("sample_every must be > 0")
@@ -56,7 +58,22 @@ def run(
     if sample_every is not None:
         sample(0)
 
+    schedule = None
+    if impulse_events:
+        schedule = ImpulseSchedule(
+            events=sorted(impulse_events, key=lambda evt: evt.t)
+        )
+
     for step in range(1, steps + 1):
+        if schedule is not None:
+            prev_t = (step - 1) * dt
+            new_t = step * dt
+            schedule.fire_for_window(
+                state,
+                prev_t=prev_t,
+                new_t=new_t,
+                include_start=(step == 1),
+            )
         integrator.step(state, model, dt)
         if callback is not None:
             callback(step, state)

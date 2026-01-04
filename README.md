@@ -18,3 +18,7 @@ RB1 smoke test scenario:
 - Use the Objects panel to select the rigid body, adjust size/mass/position, and Apply.
 
 Visual models (RB3) are rendering-only and do not affect physics.
+
+Impulse events demo:
+
+- Open `examples/scenarios/hohmann_transfer_leo_to_geo_v1.json` and enable the spacecraft trail to see the LEO-to-GEO Hohmann transfer burns.

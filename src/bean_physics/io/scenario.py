@@ -10,6 +10,7 @@ import numpy as np
 
 from ..core.forces import CompositeModel, NBodyGravity, RigidBodyForces, UniformGravity
 from ..core.integrators import SymplecticEuler, VelocityVerlet
+from ..core.impulse_events import ImpulseEvent
 from ..core.rigid_body.mass_properties import (
     box_inertia_body,
     mass_properties,
@@ -115,7 +116,8 @@ def scenario_to_runtime(
             raise ValueError(f"unknown model entry: {entry}")
 
     model = CompositeModel(models=models)
-    aux = {"inertia_body": inertia_body}
+    impulse_events = _parse_impulse_events(defn, units_cfg)
+    aux = {"inertia_body": inertia_body, "impulse_events": impulse_events}
     return state, model, integrator, dt, steps, aux
 
 
@@ -131,6 +133,23 @@ def _validate_array(arr: Any, shape_suffix: tuple[int, ...], ctx: str) -> None:
         raise ValueError(f"{ctx} must be an array with shape (*, {', '.join(map(str, shape_suffix))})")
     if tuple(a.shape[1:]) != shape_suffix:
         raise ValueError(f"{ctx} must have shape (*, {', '.join(map(str, shape_suffix))})")
+
+
+def _validate_ids(
+    values: Any,
+    expected_len: int,
+    ctx: str,
+    id_map: dict[str, tuple[str, int]],
+    kind: str,
+) -> None:
+    if not isinstance(values, list) or len(values) != expected_len:
+        raise ValueError(f"{ctx} must be a list of length {expected_len}")
+    for idx, entry in enumerate(values):
+        if not isinstance(entry, str) or not entry:
+            raise ValueError(f"{ctx}[{idx}] must be a non-empty string")
+        if entry in id_map:
+            raise ValueError(f"duplicate object id: {entry}")
+        id_map[entry] = (kind, idx)
 
 
 def _validate_scenario_v1(data: dict[str, Any]) -> ScenarioDefinition:
@@ -179,6 +198,12 @@ def _validate_scenario_v1(data: dict[str, Any]) -> ScenarioDefinition:
         if "visual" in p:
             _validate_visual_list(p["visual"], len(p["mass"]), "particles.visual")
 
+    id_map: dict[str, tuple[str, int]] = {}
+    if "particles" in entities:
+        p = entities["particles"]
+        if "ids" in p:
+            _validate_ids(p["ids"], len(p["mass"]), "particles.ids", id_map, "particle")
+
     if "rigid_bodies" in entities:
         r = entities["rigid_bodies"]
         for key in ("pos", "vel", "quat", "omega_body", "mass", "mass_distribution"):
@@ -191,6 +216,8 @@ def _validate_scenario_v1(data: dict[str, Any]) -> ScenarioDefinition:
             raise ValueError("rigid_bodies.mass must have length M")
         if "visual" in r:
             _validate_visual_list(r["visual"], len(r["mass"]), "rigid_bodies.visual")
+        if "ids" in r:
+            _validate_ids(r["ids"], len(r["mass"]), "rigid_bodies.ids", id_map, "rigid_body")
 
         md = r["mass_distribution"]
         _require(md, "points_body", "rigid_bodies.mass_distribution")
@@ -288,7 +315,37 @@ def _validate_scenario_v1(data: dict[str, Any]) -> ScenarioDefinition:
         else:
             raise ValueError(f"unknown model type: {key}")
 
+    if "impulse_events" in data:
+        _validate_impulse_events(data["impulse_events"], id_map)
+
     return data
+
+
+def _validate_impulse_events(
+    events: Any, id_map: dict[str, tuple[str, int]]
+) -> None:
+    if not isinstance(events, list):
+        raise ValueError("impulse_events must be a list")
+    if not id_map:
+        raise ValueError("impulse_events require entities.*.ids to resolve targets")
+    for idx, event in enumerate(events):
+        if not isinstance(event, dict):
+            raise ValueError("impulse_events entries must be objects")
+        ctx = f"impulse_events[{idx}]"
+        t = _require(event, "t", ctx)
+        if float(t) < 0.0:
+            raise ValueError(f"{ctx}.t must be >= 0")
+        target = _require(event, "target", ctx)
+        if not isinstance(target, str):
+            raise ValueError(f"{ctx}.target must be a string")
+        if target not in id_map:
+            raise ValueError(f"{ctx}.target not found in scenario ids")
+        delta = _require(event, "delta_v_world", ctx)
+        if len(delta) != 3:
+            raise ValueError(f"{ctx}.delta_v_world must have length 3")
+        label = event.get("label")
+        if label is not None and not isinstance(label, str):
+            raise ValueError(f"{ctx}.label must be a string")
 
 
 def _validate_visual_list(values: Any, expected_len: int, ctx: str) -> None:
@@ -309,14 +366,63 @@ def _validate_visual_block(entry: dict[str, Any], ctx: str) -> None:
     if kind == "mesh":
         if "mesh_path" not in entry:
             raise ValueError(f"{ctx}.mesh_path is required for mesh visuals")
-    if "scale" in entry and len(entry["scale"]) != 3:
-        raise ValueError(f"{ctx}.scale must have length 3")
+    if "scale" in entry:
+        scale = entry["scale"]
+        if isinstance(scale, (int, float)):
+            return
+        if len(scale) != 3:
+            raise ValueError(f"{ctx}.scale must have length 3")
     if "offset_body" in entry and len(entry["offset_body"]) != 3:
         raise ValueError(f"{ctx}.offset_body must have length 3")
     if "rotation_body_quat" in entry and len(entry["rotation_body_quat"]) != 4:
         raise ValueError(f"{ctx}.rotation_body_quat must have length 4")
     if "color_tint" in entry and len(entry["color_tint"]) != 3:
         raise ValueError(f"{ctx}.color_tint must have length 3")
+
+
+def _parse_impulse_events(
+    defn: dict[str, Any], units_cfg: UnitsConfig
+) -> list[ImpulseEvent]:
+    events = defn.get("impulse_events", [])
+    if not events:
+        return []
+    entities = defn.get("entities", {})
+    id_map: dict[str, tuple[str, int]] = {}
+    particles = entities.get("particles")
+    if isinstance(particles, dict):
+        ids = particles.get("ids", [])
+        for idx, entry in enumerate(ids):
+            id_map[str(entry)] = ("particle", idx)
+    rigid = entities.get("rigid_bodies")
+    if isinstance(rigid, dict):
+        ids = rigid.get("ids", [])
+        for idx, entry in enumerate(ids):
+            id_map[str(entry)] = ("rigid_body", idx)
+
+    if not id_map:
+        raise ValueError("impulse_events require entities.*.ids to resolve targets")
+
+    parsed: list[ImpulseEvent] = []
+    for event in events:
+        target = str(event["target"])
+        if target not in id_map:
+            raise ValueError(f"impulse_events target not found: {target}")
+        target_type, target_index = id_map[target]
+        delta_v = np.asarray(
+            to_si(event["delta_v_world"], "velocity", units_cfg),
+            dtype=np.float64,
+        )
+        parsed.append(
+            ImpulseEvent(
+                t=float(to_si(event["t"], "time", units_cfg)),
+                target_type=target_type,
+                target_index=target_index,
+                target_id=target,
+                delta_v=delta_v,
+                label=event.get("label"),
+            )
+        )
+    return sorted(parsed, key=lambda evt: evt.t)
 
 
 def _resolve_force_body(
