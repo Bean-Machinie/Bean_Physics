@@ -7,7 +7,17 @@
         2e-06,
         3e-06,
         3.227e-07,
-        0.0009545
+        0.0009545,
+        3.69228602895694e-08
+      ],
+      "physical": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
       ],
       "pos": [
         [
@@ -39,6 +49,11 @@
           5.2044,
           0.0,
           0.0
+        ],
+        [
+          1.0025695552898,
+          0.0,
+          0.0
         ]
       ],
       "trail_enabled": [
@@ -47,7 +62,8 @@
         true,
         true,
         true,
-        false
+        true,
+        true
       ],
       "vel": [
         [
@@ -77,7 +93,12 @@
         ],
         [
           0.0,
-          0.00754042990918141,
+          0.00754,
+          0.0
+        ],
+        [
+          0.0,
+          0.017792922786241176,
           0.0
         ]
       ],
@@ -159,12 +180,13 @@
             0.0
           ],
           "rotation_body_quat": [
-            1.0,
-            0.0,
-            0.0,
-            0.0
+            0.7637181677678411,
+            -0.6205211349284477,
+            -0.09840314888673955,
+            -0.1483404921712789
           ],
-          "scale": 25000000.0
+          "scale": 25000000.0,
+          "scale_mode": "match_radius"
         },
         {
           "color_tint": [
@@ -201,23 +223,41 @@
             0.0
           ],
           "rotation_body_quat": [
+            0.7261715375087568,
+            -0.6875135621296269,
+            0.0,
+            0.0
+          ],
+          "scale": 50000000.0,
+          "scale_mode": "match_radius"
+        },
+        {
+          "color_tint": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "kind": "mesh",
+          "mesh_path": "../../models/moon.glb",
+          "offset_body": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation_body_quat": [
             1.0,
             0.0,
             0.0,
             0.0
           ],
-          "scale": [
-            4.673262,
-            4.673262,
-            4.673262
-          ]
+          "scale": 6800000.0
         }
       ]
     }
   },
   "metadata": {
     "description": "Solar system subset with circular orbits in AU/day/Msun. Visual scales use radius in AU (assumes unit-radius meshes).",
-    "name": "Sun + Mercury/Venus/Earth/Mars/Jupiter (ASTRO)"
+    "name": "Sun + Mercury/Venus/Earth/Moon/Mars/Jupiter (ASTRO)"
   },
   "models": [
     {
@@ -232,7 +272,7 @@
   "simulation": {
     "dt": 0.25,
     "integrator": "velocity_verlet",
-    "steps": 2922
+    "steps": 7305
   },
   "units": {
     "enabled": true,

@@ -371,7 +371,7 @@ class MainWindow(QtWidgets.QMainWindow):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
             "Load Scenario",
-            "",
+            str(Path("examples") / "scenarios"),
             "Scenario JSON (*.json)",
         )
         if not path:
